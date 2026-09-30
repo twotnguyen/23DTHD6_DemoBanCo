@@ -17,6 +17,13 @@ builder.Services.AddDbContext<AppDbContext>(options =>
 // Nghiệp vụ phòng chơi
 builder.Services.AddScoped<RoomService>();
 
+// Ván đấu server-authoritative và chat
+builder.Services.AddScoped<MatchService>();
+builder.Services.AddScoped<ChatService>();
+
+// Đồng hồ ván đấu chạy nền: trừ thời gian, xử thua khi hết giờ hoặc treo ván
+builder.Services.AddHostedService<MatchClockService>();
+
 // Đăng nhập bằng cookie
 builder.Services.AddAuthentication("Cookie")
     .AddCookie("Cookie", options =>

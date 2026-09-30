@@ -17,7 +17,14 @@ createApp({
 
             chatMessage: "",
 
+            // Chat lấy từ window.__chatMessages: trang (Index.cshtml / Waiting.cshtml)
+            // là nơi duy nhất đăng ký handler 'ReceiveChat' và đẩy tin vào đó, nên
+            // panel Vue chỉ cần đọc lại đúng mảng đó. Trước đây Vue giữ `messages`
+            // riêng nên tin nhắn hiện trên DOM nhưng không vào panel.
             messages: [],
+
+            // Hook do trang gọi sau khi đẩy tin mới, để panel tự cập nhật.
+            onChatReceived: null,
 
             pendingIceCandidates: [],
             localStream: null,
@@ -32,8 +39,15 @@ createApp({
             // SignalR
             connection: null,
 
-            // Room hiện tại
-            roomId: "room001",
+            // Id phòng lấy theo thứ tự ưu tiên: biến trang truyền vào, rồi query
+            // string ?id=, rồi path dạng /Room/Waiting/5. Nếu không lấy được thì
+            // để rỗng để bỏ qua JoinRoom, thay vì gửi roomId sai.
+            roomId: window.__roomId
+                || new URLSearchParams(window.location.search).get('id')
+                || (function () {
+                    const m = window.location.pathname.match(/\/Waiting\/(\d+)/);
+                    return m ? m[1] : '';
+                })(),
 
             grid: {
                 left: 15.5,
@@ -46,6 +60,29 @@ createApp({
 
 
     async mounted() {
+
+        // Gom chat về MỘT nguồn: window.__chatMessages do trang đẩy vào khi có
+        // tin mới. Gán hook ngay ở mounted (trước khi nối SignalR) để không bỏ
+        // sót tin nào đến sớm.
+        this.messages = window.__chatMessages || [];
+
+        this.onChatReceived = (list) => {
+
+            this.messages = list || window.__chatMessages || [];
+
+            this.$nextTick(() => {
+
+                const chat = this.$refs.chatMessages;
+
+                if (chat) {
+                    chat.scrollTop = chat.scrollHeight;
+                }
+
+            });
+
+        };
+
+        window.__onChatReceived = this.onChatReceived;
 
         await this.loadBoard();
         this.connectSignalR();
@@ -279,37 +316,11 @@ createApp({
 
                 }
             );
-            this.connection.on(
-                "ReceiveMessage",
-                (userName, message) => {
-
-                    console.log(
-                        "Chat:",
-                        userName,
-                        message
-                    );
-
-                    this.messages.push({
-                        userName: userName,
-                        message: message
-                    });
-
-
-                    // Tự động kéo xuống tin nhắn cuối
-                    this.$nextTick(() => {
-
-                        const chat =
-                            this.$refs.chatMessages;
-
-                        if (chat) {
-                            chat.scrollTop =
-                                chat.scrollHeight;
-                        }
-
-                    });
-
-                }
-            );
+            /* Chat không đăng ký handler ở đây: ChessHub phát "ReceiveChat" với MỘT
+               object, còn handler cũ "ReceiveMessage" nhận 2 tham số nên không bao
+               giờ khớp. Trang (Index.cshtml / Waiting.cshtml) là nơi duy nhất đăng
+               ký, đẩy tin vào window.__chatMessages rồi gọi window.__onChatReceived
+               mà mounted() đã gán sẵn. */
 
             this.connection.on(
                 "ReceiveOffer",
@@ -557,27 +568,24 @@ createApp({
             );
 
             // =========================
-            // Connect
+            // Connect + vào phòng
             // =========================
 
-             this.connection.start();
+            // Trang không thuộc phòng nào (ví dụ /Room/Lobby) thì chỉ kết nối,
+            // KHÔNG invoke JoinRoom: gửi roomId rỗng sẽ ra lỗi
+            // "Cannot send data if the connection is not in the Connected State".
+            const roomId = parseInt(this.roomId, 10);
 
-            console.log("SignalR connected");
-
-
-            // =========================
-            // Join room
-            // =========================
-
-             this.connection.invoke(
-                "JoinRoom",
-                this.roomId
-            );
-
-            console.log(
-                "Joined:",
-                this.roomId
-            );
+            this.connection.start()
+                .then(() => {
+                    if (!roomId || roomId <= 0) {
+                        console.log("Không có phòng, bỏ qua JoinRoom");
+                        return null;
+                    }
+                    return this.connection.invoke("JoinRoom", roomId, null);
+                })
+                .then(() => console.log("Joined:", roomId || "(không có phòng)"))
+                .catch((err) => console.error("SignalR error:", err));
         },
         applyMove(move) {
 
@@ -958,12 +966,22 @@ createApp({
                 return;
 
 
-            await this.connection.invoke(
-                "SendMessage",
+            // Chat thuộc phòng: không có roomId hợp lệ thì không gửi, vì hub
+            // cần roomId đúng và sẽ từ chối.
+            const roomId = parseInt(this.roomId, 10);
+            if (!roomId || roomId <= 0)
+                return;
 
-                this.roomId,
-                this.userName,
-                message
+
+            // Hub có hàm SendChat(roomId, channel, body, sticker), không có
+            // "SendMessage" — gọi tên cũ sẽ không tồn tại. channel 0 = phòng chung.
+            await this.connection.invoke(
+                "SendChat",
+
+                parseInt(this.roomId, 10) || 0,
+                0,
+                message,
+                null
             );
 
 

@@ -1,0 +1,208 @@
+@using _23DTHD6_DemoBanCo.Models
+
+@{
+    // Sảnh: chọn chế độ chơi, tạo phòng, vào phòng theo mã, xem các phòng đang mở.
+    var publicRooms = (List<Room>)ViewBag.PublicRooms;
+    var myRooms = (List<Room>)ViewBag.MyRooms;
+    var myElo = (int)ViewBag.MyElo;
+    var myTierName = (string)ViewBag.MyTierName;
+    var myWins = (int)ViewBag.MyWins;
+    var myLosses = (int)ViewBag.MyLosses;
+}
+
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="utf-8" />
+    <title>Sảnh - Cờ Tướng Online</title>
+    <style>
+        body { font-family: system-ui, -apple-system, "Segoe UI", sans-serif; margin: 0; background: #f4f5f7; color: #222; }
+        .wrap { max-width: 980px; margin: 0 auto; padding: 24px 16px 60px; }
+        h1 { font-size: 24px; margin: 0 0 4px; }
+        .sub { color: #666; font-size: 14px; margin-bottom: 20px; }
+        .topbar { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; }
+        .elo-box { background: #fff; border: 1px solid #ddd; border-radius: 8px; padding: 8px 14px; font-size: 14px; }
+        .elo-box strong { color: #1a73e8; }
+        .tabs { display: flex; gap: 8px; margin: 20px 0 16px; flex-wrap: wrap; }
+        .tab { padding: 10px 18px; border-radius: 8px; background: #fff; border: 1px solid #ddd; cursor: pointer; font-size: 15px; font-weight: 600; }
+        .tab.active { background: #1a73e8; color: #fff; border-color: #1a73e8; }
+        .panel { display: none; background: #fff; border: 1px solid #ddd; border-radius: 10px; padding: 18px; }
+        .panel.active { display: block; }
+        h2 { font-size: 18px; margin: 0 0 12px; }
+        h3 { font-size: 15px; margin: 18px 0 8px; }
+        label { display: block; font-size: 14px; margin-bottom: 4px; color: #444; }
+        input[type=text] { padding: 9px 10px; border: 1px solid #ccc; border-radius: 6px; width: 100%; max-width: 320px; font-size: 15px; }
+        button { padding: 9px 16px; border: none; border-radius: 6px; background: #1a73e8; color: #fff; cursor: pointer; font-size: 14px; font-weight: 600; }
+        button:hover { background: #1558b0; }
+        button.secondary { background: #fff; color: #333; border: 1px solid #ccc; }
+        button.secondary:hover { background: #f0f0f0; }
+        .row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin-top: 10px; }
+        .note { font-size: 13px; color: #777; margin-top: 8px; }
+        .room-list { list-style: none; padding: 0; margin: 10px 0 0; }
+        .room-list li { border: 1px solid #e2e2e2; border-radius: 8px; padding: 10px 12px; margin-bottom: 8px; display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; }
+        .room-name { font-weight: 600; }
+        .room-meta { font-size: 13px; color: #666; }
+        .code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 15px; letter-spacing: 1px; }
+        .empty { color: #888; font-size: 14px; padding: 12px 0; }
+        .side-group { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
+    </style>
+</head>
+<body>
+    <div class="wrap">
+
+        <div class="topbar">
+            <div>
+                <h1>Sảnh Cờ Tướng</h1>
+                <div class="sub">Chọn chế độ chơi, tạo phòng hoặc vào phòng đang mở.</div>
+            </div>
+            <div class="elo-box">
+                Bậc <strong>@myTierName</strong> &middot; Elo <strong>@myElo</strong>
+                <span class="room-meta">(@myWins thắng / @myLosses thua)</span>
+            </div>
+        </div>
+
+        <div class="tabs">
+            <div class="tab active" data-tab="casual">Đánh thường</div>
+            <div class="tab" data-tab="ranked">Đánh hạng</div>
+            <div class="tab" data-tab="ai">Đánh với máy</div>
+        </div>
+
+        <!-- ============ 1. ĐÁNH THƯỜNG ============ -->
+        <div class="panel active" id="panel-casual">
+            <h2>Đánh thường</h2>
+            <p class="note">Chơi tự do, có thể mời bạn bè và cho khán giả xem.</p>
+
+            <div class="row">
+                <button type="button">Ghép ngẫu nhiên</button>
+            </div>
+            <div class="note">Chưa có hàng đợi chờ người chơi ở bản demo này.</div>
+
+            <h3>Tạo phòng thi đấu</h3>
+            <form asp-controller="Room" asp-action="Create" method="post">
+                @Html.AntiForgeryToken()
+                <label for="roomName">Tên phòng</label>
+                <input type="text" id="roomName" name="name" placeholder="Ví dụ: Phòng của tôi" maxlength="60" />
+                <div class="row">
+                    <button type="submit">Tạo phòng</button>
+                </div>
+            </form>
+
+            <h3>Vào phòng bằng mã</h3>
+            <form asp-controller="Room" asp-action="JoinByCode" method="get">
+                <label for="joinCode">Mã phòng (6 hoặc 8 ký tự)</label>
+                <input type="text" id="joinCode" name="code" placeholder="ABCD2345" maxlength="8" />
+                <div class="row">
+                    <button type="submit">Vào phòng</button>
+                </div>
+            </form>
+
+            @if (myRooms != null && myRooms.Count > 0)
+            {
+                <h3>Phòng của tôi</h3>
+                <ul class="room-list">
+                    @foreach (var mine in myRooms)
+                    {
+                        <li>
+                            <div>
+                                <div class="room-name">@mine.Name</div>
+                                <div class="room-meta">
+                                    Mã <span class="code">@mine.Code</span> &middot;
+                                    @mine.Visibility &middot; @mine.Status
+                                </div>
+                            </div>
+                            <a asp-controller="Room" asp-action="Waiting" asp-route-id="@mine.Id">Vào phòng</a>
+                        </li>
+                    }
+                </ul>
+            }
+
+            <h3>Phòng đang mở</h3>
+            @if (publicRooms == null || publicRooms.Count == 0)
+            {
+                <div class="empty">Chưa có phòng nào đang mở. Hãy tạo một phòng trước nhé.</div>
+            }
+            else
+            {
+                <ul class="room-list">
+                    @foreach (var room in publicRooms)
+                    {
+                        int players = room.Participants.Count(p => p.Role == ParticipantRole.Player);
+                        int spectators = room.Participants.Count(p => p.Role == ParticipantRole.Spectator);
+                        <li>
+                            <div>
+                                <div class="room-name">@room.Name</div>
+                                <div class="room-meta">
+                                    Chủ phòng: @(room.Owner?.DisplayName ?? "Không rõ")
+                                    &middot; Mã <span class="code">@room.Code</span>
+                                    &middot; @players/2 đấu thủ, @spectators/@((int)ViewBag.Capacity - 2) khán giả
+                                </div>
+                            </div>
+                            <a asp-controller="Room" asp-action="JoinByCode" asp-route-code="@room.Code">Vào phòng</a>
+                        </li>
+                    }
+                </ul>
+            }
+        </div>
+
+        <!-- ============ 2. ĐÁNH HẠNG ============ -->
+        <div class="panel" id="panel-ranked">
+            <h2>Đánh hạng</h2>
+            <div class="row">
+                <button type="button">Tìm trận Xếp hạng</button>
+            </div>
+            <div class="note">Chưa có hàng đợi xếp hạng ở bản demo này.</div>
+            <p class="note">
+                Luật chế độ này: không thể mời bạn, không cho khán giả xem, không đi lại nước.
+                Điểm Elo của bạn là <strong>@myElo</strong> (bậc @myTierName).
+            </p>
+        </div>
+
+        <!-- ============ 3. ĐÁNH VỚI MÁY ============ -->
+        <div class="panel" id="panel-ai">
+            <h2>Đánh với máy</h2>
+            <p class="note">Chưa có bộ máy cờ trong bản demo này.</p>
+
+            <h3>Cấp độ máy</h3>
+            <div class="row">
+                <button type="button" class="secondary">Dễ</button>
+                <button type="button" class="secondary">Trung bình</button>
+                <button type="button" class="secondary">Khó</button>
+            </div>
+
+            <h3>Bạn cầm phe nào</h3>
+            <div class="side-group">
+                <button type="button" class="secondary">Đỏ</button>
+                <button type="button" class="secondary">Đen</button>
+                <button type="button" class="secondary">Ngẫu nhiên</button>
+            </div>
+        </div>
+
+        <p class="note">
+            <a asp-controller="Home" asp-action="Index">Về trang chủ</a> &middot;
+            <a asp-controller="Home" asp-action="Privacy">Giới thiệu</a>
+        </p>
+
+    </div>
+
+    <script>
+        // Chuyển khu vực: chỉ dùng class, không cần thư viện ngoài.
+        (function () {
+            const tabs = document.querySelectorAll('.tab');
+            const panels = document.querySelectorAll('.panel');
+
+            tabs.forEach(function (tab) {
+                tab.addEventListener('click', function () {
+                    const name = tab.getAttribute('data-tab');
+
+                    tabs.forEach(function (t) { t.classList.remove('active'); });
+                    panels.forEach(function (p) { p.classList.remove('active'); });
+
+                    tab.classList.add('active');
+                    const panel = document.getElementById('panel-' + name);
+                    if (panel) { panel.classList.add('active'); }
+                });
+            });
+        })();
+    </script>
+</body>
+</html>
