@@ -20,6 +20,11 @@ publish/
 *.snupkg
 .nuget/
 
+## Cơ sở dữ liệu SQLite
+*.db
+*.db-shm
+*.db-wal
+
 ## macOS
 .DS_Store
 ._*
