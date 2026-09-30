@@ -1,4 +1,4 @@
-﻿const { createApp } = Vue;
+const { createApp } = Vue;
 
 createApp({
 
@@ -92,6 +92,33 @@ createApp({
 
     methods: {
 
+    /* ==============================================================
+       GỌI AN TOÀN QUA HUB
+       invoke() trên connection chưa Connected (hoặc connection null vì trang
+       đã tự quản lý) sẽ ném "Cannot send data if the connection is not in the
+       Connected State". Mọi lời gọi đều đi qua safeInvoke để bỏ qua im lặng thay
+       vì ném lỗi ra console.
+       ============================================================== */
+    safeInvoke(hubMethod, ...args) {
+
+        const c = this.connection;
+
+        if (!c) {
+            return Promise.resolve(false);
+        }
+
+        if (c.state !== signalR.HubConnectionState.Connected) {
+            console.warn('Bỏ qua ' + hubMethod + ': chưa kết nối.');
+            return Promise.resolve(false);
+        }
+
+        return c.invoke(hubMethod, ...args).catch((err) => {
+            console.warn('Gọi ' + hubMethod + ' thất bại:', err);
+            return false;
+        });
+    },
+
+
         // ==========================
         // LOAD DATA
         // ==========================
@@ -152,7 +179,7 @@ createApp({
                 );
 
 
-            await this.connection.invoke(
+            await this.safeInvoke(
 
                 "SendOffer",
 
@@ -233,7 +260,7 @@ createApp({
                         return;
 
 
-                    await this.connection.invoke(
+                    await this.safeInvoke(
 
                         "SendIceCandidate",
 
@@ -292,11 +319,33 @@ createApp({
         },
         connectSignalR() {
 
-            this.connection =
-                new signalR.HubConnectionBuilder()
-                    .withUrl("/chessHub")
-                    .withAutomaticReconnect()
-                    .build();
+            // Trang phòng chờ tự tạo connection của riêng nó và gán vào
+            // window.__cotuongConnection. Nếu cotuong.js lại tạo connection thứ hai
+            // thì hai cái cùng start, cùng invoke JoinRoom, và cái nào chưa
+            // Connected sẽ ném "Cannot send data if the connection is not in the
+            // Connected State". Vì vậy khi trang đã có sẵn thì dùng lại, tuyệt đối
+            // không tạo thêm.
+            const shared = window.__cotuongConnection;
+
+            this.ownsConnection = !shared && !window.__noOwnConnection;
+
+            if (shared) {
+                this.connection = shared;
+            } else if (window.__noOwnConnection) {
+                // Trang yêu cầu không tự mở kết nối và cũng chưa đưa sẵn connection.
+                this.connection = null;
+                return;
+            } else {
+                this.connection =
+                    new signalR.HubConnectionBuilder()
+                        .withUrl("/chessHub")
+                        .withAutomaticReconnect()
+                        .build();
+            }
+
+            if (!this.connection) {
+                return;
+            }
 
 
             // =========================
@@ -367,7 +416,7 @@ createApp({
                         );
 
 
-                    await this.connection.invoke(
+                    await this.safeInvoke(
 
                         "SendAnswer",
 
@@ -443,7 +492,7 @@ createApp({
                         // SEND ANSWER
                         // ========================
 
-                        await this.connection.invoke(
+                        await this.safeInvoke(
 
                             "SendAnswer",
 
@@ -571,6 +620,12 @@ createApp({
             // Connect + vào phòng
             // =========================
 
+            // Dùng connection của trang thì trang tự lo start và JoinRoom, ở đây
+            // không được start lại lần nữa cũng không được invoke trùng.
+            if (!this.ownsConnection) {
+                return;
+            }
+
             // Trang không thuộc phòng nào (ví dụ /Room/Lobby) thì chỉ kết nối,
             // KHÔNG invoke JoinRoom: gửi roomId rỗng sẽ ra lỗi
             // "Cannot send data if the connection is not in the Connected State".
@@ -582,7 +637,7 @@ createApp({
                         console.log("Không có phòng, bỏ qua JoinRoom");
                         return null;
                     }
-                    return this.connection.invoke("JoinRoom", roomId, null);
+                    return this.safeInvoke("JoinRoom", roomId, null);
                 })
                 .then(() => console.log("Joined:", roomId || "(không có phòng)"))
                 .catch((err) => console.error("SignalR error:", err));
@@ -934,7 +989,9 @@ createApp({
             const fromCol = piece.col;
 
 
-            this.connection.invoke(
+            // Dùng safeInvoke để không ném lỗi khi chưa kết nối, và chỉ bỏ chọn
+            // quân khi lệnh thật sự đã gửi đi.
+            this.safeInvoke(
                 "MovePiece",
 
                 this.roomId,
@@ -946,10 +1003,13 @@ createApp({
 
                 row,
                 col
-            );
+            ).then((sent) => {
 
+                if (sent !== false) {
+                    this.selectedPiece = null;
+                }
 
-            this.selectedPiece = null;
+            });
         },
 
         async sendMessage() {
@@ -975,18 +1035,21 @@ createApp({
 
             // Hub có hàm SendChat(roomId, channel, body, sticker), không có
             // "SendMessage" — gọi tên cũ sẽ không tồn tại. channel 0 = phòng chung.
-            await this.connection.invoke(
+            // Chỉ xóa ô nhập khi lệnh đã gửi được, nếu không sẽ mất tin của người
+            // chơi mà không có gì hiện ra.
+            const sent = await this.safeInvoke(
                 "SendChat",
 
-                parseInt(this.roomId, 10) || 0,
+                roomId,
                 0,
                 message,
                 null
             );
 
 
-            // Xóa textbox
-            this.chatMessage = "";
+            if (sent !== false) {
+                this.chatMessage = "";
+            }
 
         }
     }

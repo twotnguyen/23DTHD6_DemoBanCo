@@ -41,6 +41,18 @@ builder.Services.AddScoped<AccountService>();
 builder.Services.AddScoped<MatchService>();
 builder.Services.AddScoped<ChatService>();
 
+// Bảng xếp hạng Elo, lịch sử ván đấu với máy, và luồng đấu với máy.
+// AiMatchService phụ thuộc RoomService + MatchService (đều đã đăng ký ở trên),
+// nên thứ tự dòng không quan trọng, container DI tự giải phụ thuộc theo đồ thị.
+builder.Services.AddScoped<LeaderboardService>();
+builder.Services.AddScoped<MatchHistoryService>();
+builder.Services.AddScoped<AiMatchService>();
+
+// Bạn bè và tin nhắn riêng. DirectMessageService phụ thuộc FriendshipService nên
+// cả hai cùng nằm trong nhóm này.
+builder.Services.AddScoped<FriendshipService>();
+builder.Services.AddScoped<DirectMessageService>();
+
 // Đồng hồ ván đấu chạy nền: trừ thời gian, xử thua khi hết giờ hoặc treo ván
 builder.Services.AddHostedService<MatchClockService>();
 

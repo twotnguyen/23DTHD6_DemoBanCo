@@ -368,6 +368,28 @@
          Vue app. Không có nó thì roomId rỗng và lệnh JoinRoom sẽ hỏng. -->
     <script>window.__roomId = @Model.Id;</script>
     <script>window.__myUserId = @currentUserId;</script>
+
+    <!-- MỘT connection cho cả trang, tạo TRƯỚC cotuong.js.
+         cotuong.js sẽ bỏ việc tự mở kết nối và dùng luôn connection này, nếu
+         không sẽ có hai kết nối cùng start, cùng invoke JoinRoom, và cái nào
+         chưa Connected sẽ ném "Cannot send data if the connection is not in
+         the Connected State". Mọi invoke sau đó đều chờ window.__readyPromise. -->
+    <script>
+        window.__noOwnConnection = true;
+        window.__pageConnection = new signalR.HubConnectionBuilder()
+            .withUrl('/chessHub')
+            .withAutomaticReconnect()
+            .build();
+        window.__cotuongConnection = window.__pageConnection;
+        window.__readyPromise = window.__pageConnection.start().then(function () {
+            var rid = parseInt(window.__roomId, 10);
+            return rid > 0 ? window.__pageConnection.invoke('JoinRoom', rid, null) : null;
+        });
+        window.__readyPromise.catch(function (err) {
+            console.error('Không kết nối được phòng:', err);
+        });
+    </script>
+
     <script src="/js/cotuong.js"></script>
 
     <script>
@@ -424,21 +446,12 @@
                 });
             }
 
-            /* ---------- MỘT connection cho cả trang ----------
-               cotuong.js tự tạo connection riêng nhưng KHÔNG export ra ngoài
-               (createApp(...).mount("#app") không gán vào biến nào), nên bản cũ
-               poll window.MatchConnection — biến này không bao giờ được gán nên
-               handler chưa từng đăng ký, bàn vì thế trống.
-
-               Không lấy được connection đó thì tạo MỘT connection ở đây và tự
-               lo phần vào phòng. Vẫn chỉ có 1 kết nối SignalR thật sự: hub
-               gom theo ConnectionId, nên gọi JoinRoom thêm một lần chỉ cập
-               nhật đúng bản ghi participant (RoomService.AddParticipantAsync
-               update ConnectionId nếu đã có) chứ không tạo người chơi trùng. */
-            const connection = new signalR.HubConnectionBuilder()
-                .withUrl('/chessHub')
-                .withAutomaticReconnect()
-                .build();
+            /* ---------- Dùng lại MỘT connection của trang ----------
+               Connection đã được tạo và start ở phần script nằm TRƯỚC khi nạp
+               cotuong.js, và cotuong.js đã được yêu cầu không tự mở kết nối.
+               Nhờ vậy trang chỉ có đúng một kết nối SignalR. */
+            const connection = window.__pageConnection;
+            const readyPromise = window.__readyPromise;
 
             window.MatchConnection = connection;
 
@@ -602,7 +615,13 @@
             if (readyBtn) {
                 readyBtn.addEventListener('click', function () {
                     const next = readyBtn.dataset.ready !== 'true';
-                    connection.invoke('ToggleReady', roomId, next)
+
+                    // Chờ start() xong rồi mới invoke, nếu không sẽ ném
+                    // "Cannot send data if the connection is not in the Connected State".
+                    readyPromise
+                        .then(function () {
+                            return connection.invoke('ToggleReady', roomId, next);
+                        })
                         .catch(function (err) {
                             console.error('Không đổi được trạng thái sẵn sàng:', err);
                         });
@@ -632,36 +651,27 @@
                         return;
                     }
 
-                    connection.invoke('SubmitMove', currentMatchId, {
-                        pieceId: pieceId,
-                        fromRow: from.row,
-                        fromCol: from.col,
-                        toRow: to.row,
-                        toCol: to.col
-                    }).then(function (result) {
-                        if (result && result.success === false) {
-                            console.warn('Nước đi bị từ chối:', result.error);
-                        }
-                    }).catch(function (err) {
-                        console.error('Lỗi gửi nước đi', err);
-                    });
+                    readyPromise
+                        .then(function () {
+                            return connection.invoke('SubmitMove', currentMatchId, {
+                                pieceId: pieceId,
+                                fromRow: from.row,
+                                fromCol: from.col,
+                                toRow: to.row,
+                                toCol: to.col
+                            });
+                        })
+                        .then(function (result) {
+                            if (result && result.success === false) {
+                                console.warn('Nước đi bị từ chối:', result.error);
+                            }
+                        }).catch(function (err) {
+                            console.error('Lỗi gửi nước đi', err);
+                        });
                 };
             }
 
-            /* Chỉ vào phòng khi connection ĐÃ ở trạng thái Connected, nếu không
-               invoke sẽ ném "Cannot send data if the connection is not in the
-               Connected State". */
-            connection.start()
-                .then(function () {
-                    if (!roomId || roomId <= 0) return;
-                    return connection.invoke('JoinRoom', roomId, null);
-                })
-                .then(function () {
-                    console.log('Đã vào phòng', roomId);
-                })
-                .catch(function (err) {
-                    console.error('Không kết nối được phòng:', err);
-                });
+            // start() và JoinRoom đã chạy sẵn ở window.__readyPromise phía trên.
 
         })();
     </script>
