@@ -16,12 +16,18 @@ namespace _23DTHD6_DemoBanCo.Controllers
         private readonly AppDbContext _db;
         private readonly RoomService _roomService;
         private readonly IHubContext<ChessHub> _hubContext;
+        private readonly MatchmakingService _matchmaking;
 
-        public RoomController(AppDbContext db, RoomService roomService, IHubContext<ChessHub> hubContext)
+        public RoomController(
+            AppDbContext db,
+            RoomService roomService,
+            IHubContext<ChessHub> hubContext,
+            MatchmakingService matchmaking)
         {
             _db = db;
             _roomService = roomService;
             _hubContext = hubContext;
+            _matchmaking = matchmaking;
         }
 
         /// <summary>Lấy Id người đang đăng nhập từ cookie.</summary>
@@ -127,13 +133,17 @@ namespace _23DTHD6_DemoBanCo.Controllers
             var me = await _db.Users
                 .AsNoTracking()
                 .FirstOrDefaultAsync(u => u.Id == userId);
-
             ViewBag.MyElo = me?.Elo ?? EloCalculator.StartingElo;
             ViewBag.MyWins = me?.Wins ?? 0;
             ViewBag.MyLosses = me?.Losses ?? 0;
             ViewBag.MyTierName = EloCalculator.GetTierName(
                 EloCalculator.GetTier(me?.Elo ?? EloCalculator.StartingElo));
 
+            // Khách không được xếp hạng: UI cần biết để bỏ nút thay vì bấm rồi mới
+            // bị từ chối. Số người đang chờ cũng hiện sẵn cho thấy hàng đợi có ai.
+            ViewBag.IsGuest = me?.IsGuest ?? false;
+            ViewBag.CasualQueueSize = _matchmaking.QueueSize(MatchmakingQueue.QueueKind.Casual);
+            ViewBag.RankedQueueSize = _matchmaking.QueueSize(MatchmakingQueue.QueueKind.Ranked);
             return View();
         }
 
@@ -196,10 +206,17 @@ namespace _23DTHD6_DemoBanCo.Controllers
         /// </summary>
         private async Task<(Room Room, string? Error)> JoinRoomAsParticipantAsync(Room room, int userId)
         {
-            // Đã trong phòng rồi thì không ghi lại, chỉ chờ cập nhật từ hub
+            // Đã trong phòng rồi thì không ghi lại, chỉ chờ cập nhật từ hub.
+            // Không chặn ở đây vì chủ phòng có thể khoá giữa lúc người chơi đang
+            // ở trong phòng và F5 lại trang (đặc tả 4.3: người đang ở trong giữ lại).
             var existing = room.Participants.FirstOrDefault(p => p.UserId == userId);
             if (existing != null)
                 return (room, null);
+
+            // Phòng khoá thì không ai vào được từ bên ngoài, kể cả khi có đúng mã
+            // hay mở thẳng URL. Public và CodeOnly thì vào bình thường.
+            if (room.Visibility == RoomVisibility.Locked)
+                return (room, "Phòng này đang khóa, không ai vào được từ bên ngoài.");
 
             if (room.Participants.Count >= RoomService.MaxRoomCapacity)
                 return (room, "Phòng đã đủ người, bạn không vào được phòng này nữa.");

@@ -27,6 +27,12 @@ builder.Services.AddDbContext<AppDbContext>(options =>
 // Nghiệp vụ phòng chơi
 builder.Services.AddScoped<RoomService>();
 
+// Ghép trận: hàng đợi phải là singleton để mọi kết nối dùng chung, nhưng singleton
+// không được phụ thuộc DbContext scoped (sẽ chặn app khởi động). Nên tách hai phần:
+// MatchmakingQueue giữ trạng thái trong bộ nhớ, MatchmakingService lo phần CSDL.
+builder.Services.AddSingleton<MatchmakingQueue>();
+builder.Services.AddScoped<MatchmakingService>();
+
 // Tài khoản: OTP, đăng ký, đổi tên đăng nhập
 builder.Services.AddScoped<OtpService>();
 builder.Services.AddScoped<AccountService>();
@@ -90,4 +96,5 @@ app.MapControllerRoute(
     name: "default",
     pattern: "{controller=Home}/{action=Index}/{id?}");
 app.MapHub<ChessHub>("/chessHub");
+app.MapHub<MatchmakingHub>("/matchmakingHub");
 app.Run();
