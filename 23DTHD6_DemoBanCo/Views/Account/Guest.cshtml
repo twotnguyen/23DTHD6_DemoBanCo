@@ -1,0 +1,46 @@
+@model GuestLoginViewModel
+
+@{
+    ViewData["Title"] = "Đăng nhập Khách";
+}
+
+<div class="auth-page">
+    <div class="auth-card">
+        <h1 class="auth-title">Chơi thử nhanh</h1>
+        <p class="auth-subtitle">Đăng nhập không cần mật khẩu, chỉ cần một tên hiển thị</p>
+
+        @if (!string.IsNullOrEmpty(Model.ErrorMessage))
+        {
+            <div class="alert alert-danger" role="alert">@Model.ErrorMessage</div>
+        }
+
+        @*
+        Cảnh báo bắt buộc về giới hạn của chế độ Khách.
+        Không được bỏ khối này: người chơi phải biết trước là không tính Elo và không lưu lịch sử.
+        *@
+        <div class="alert alert-warning" role="alert">
+            Lưu ý: Chế độ Khách không được tham gia đánh Xếp hạng để tính điểm Elo và không lưu lịch sử ván cờ.
+        </div>
+
+        @* Nhập tên hiển thị, 2-20 ký tự, chấp nhận tiếng Việt có dấu *@
+        <form method="post" asp-controller="Account" asp-action="Guest">
+            <div class="mb-3">
+                <label asp-for="DisplayName" class="form-label">Tên hiển thị</label>
+                <input asp-for="DisplayName" class="form-control" maxlength="20" autocomplete="nickname" autofocus />
+                <div class="form-text">2 đến 20 ký tự, có thể dùng tiếng Việt có dấu.</div>
+                <span asp-validation-for="DisplayName" class="text-danger"></span>
+            </div>
+
+            <button type="submit" class="btn btn-primary w-100">Vào bàn cờ</button>
+        </form>
+
+        <p class="auth-footer">
+            Muốn tính Elo và lưu lịch sử?
+            <a asp-controller="Account" asp-action="Register">Đăng ký tài khoản</a>
+        </p>
+    </div>
+</div>
+
+@section Scripts {
+    <partial name="_ValidationScriptsPartial" />
+}

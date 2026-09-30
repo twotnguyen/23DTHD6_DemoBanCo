@@ -32,6 +32,15 @@
             <button type="submit" class="btn btn-primary w-100">Đăng nhập</button>
         </form>
 
+        @* Nút chế độ Khách: đặt ngay dưới khung đăng nhập, tách bằng đường kẻ cho nổi bật *@
+        <hr class="my-4" />
+
+        <p class="text-center text-muted mb-2">Không muốn tạo tài khoản?</p>
+
+        <a class="btn btn-outline-primary w-100" asp-controller="Account" asp-action="Guest">
+            Chơi nhanh với tư cách Khách
+        </a>
+
         <p class="auth-footer">
             Chưa có tài khoản?
             <a asp-controller="Account" asp-action="Register">Đăng ký ngay</a>

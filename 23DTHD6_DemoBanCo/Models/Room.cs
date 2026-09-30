@@ -30,6 +30,13 @@ namespace _23DTHD6_DemoBanCo.Models
         /// </summary>
         public int? ActiveMatchId { get; set; }
 
+        /// <summary>
+        /// Khoá ván của phòng: đặt khi ván bắt đầu, xoá khi ván kết thúc.
+        /// Chặn hai lệnh StartMatch chạy song song — chỉ kiểm tra ActiveMatchId rồi mới
+        /// ghi vẫn hở, hai lệnh cùng lúc đều đọc được phòng đang trống.
+        /// </summary>
+        public bool IsStartingMatch { get; set; }
+
         public ICollection<RoomParticipant> Participants { get; set; } = new List<RoomParticipant>();
     }
 

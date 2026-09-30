@@ -100,6 +100,22 @@
         .alert { background: #fdecea; border: 1px solid #f5c6c2; color: #c5221f; padding: 10px 12px; border-radius: 8px; margin-bottom: 14px; font-size: 14px; }
         .qr { width: 190px; border: 1px solid #ddd; border-radius: 8px; padding: 6px; background: #fff; }
         input[type=text] { padding: 8px 10px; border: 1px solid #ccc; border-radius: 6px; font-size: 14px; width: 100%; box-sizing: border-box; }
+
+        /* ---- Lớp đếm ngược 3-2-1 ---- */
+        .countdown { position: fixed; inset: 0; background: rgba(0,0,0,.65); z-index: 200; display: flex; align-items: center; justify-content: center; }
+        .countdown-inner { text-align: center; color: #fff; }
+        #countdownNum { font-size: 110px; font-weight: 800; line-height: 1; }
+        .countdown-sub { font-size: 17px; margin-top: 10px; opacity: .9; }
+
+        /* ---- Hai ghế ---- */
+        .seat { border: 1px solid #e2e2e2; border-radius: 8px; padding: 10px 12px; margin-bottom: 8px; }
+        .seat-name { font-weight: 600; }
+        .seat.red .seat-name { color: #c5221f; }
+        .seat.black .seat-name { color: #174ea6; }
+        .seat-empty { color: #999; font-style: italic; }
+
+        /* Khi đã vào ván: ẩn phần phòng chờ, chỉ còn bàn cờ */
+        .in-match #waitingArea { display: none; }
     </style>
 </head>
 <body>
@@ -112,6 +128,16 @@
         {
             <div class="alert">@errorMessage</div>
         }
+
+        @* Đếm ngược 3-2-1 trước khi vào ván (đặc tả 2.3). Ẩn mặc định. *@
+        <div id="countdown" class="countdown" style="display:none;">
+            <div class="countdown-inner">
+                <div id="countdownNum">3</div>
+                <div class="countdown-sub" id="countdownSub">Cả hai đã sẵn sàng</div>
+            </div>
+        </div>
+
+        <div id="waitingArea">
 
         <div class="layout">
 
@@ -138,6 +164,26 @@
 
             <!-- ============ CỘT PHÒNG CHỜ ============ -->
             <div class="side-col">
+
+                <div class="card" style="margin-bottom: 16px;">
+                    <h2>Hai ghế cờ</h2>
+                    @{
+                        var redPlayer = ordered.FirstOrDefault(p => p.Side == "do");
+                        var blackPlayer = ordered.FirstOrDefault(p => p.Side == "den");
+                    }
+                    <div class="seat red">
+                        <div class="seat-name">Ghế Đỏ (đi trước)</div>
+                        <div id="seatRed">@(redPlayer == null
+                            ? (object)"<span class='seat-empty'>Trống</span>"
+                            : redPlayer.User?.DisplayName ?? "Người chơi")</div>
+                    </div>
+                    <div class="seat black">
+                        <div class="seat-name">Ghế Đen (đi sau)</div>
+                        <div id="seatBlack">@(blackPlayer == null
+                            ? (object)"<span class='seat-empty'>Trống</span>"
+                            : blackPlayer.User?.DisplayName ?? "Người chơi")</div>
+                    </div>
+                </div>
 
                 <div class="card" style="margin-bottom: 16px;">
                     <h2>Người trong phòng (@playerCount/2 đấu thủ &middot; @spectatorCount/@(capacity - 2) khán giả)</h2>
@@ -195,16 +241,25 @@
                 @if (isPlayer)
                 {
                     <div class="card" style="margin-bottom: 16px;">
-                        <h2>Ghế của tôi: @(mySide == "do" ? "Đỏ" : mySide == "den" ? "Đen" : "Chưa chọn")</h2>
+                        <h2>Ghế của tôi: <span id="mySideLabel">@(mySide == "do" ? "Đỏ" : mySide == "den" ? "Đen" : "Chưa chọn")</span></h2>
 
-                        <form asp-controller="Room" asp-action="SetReady" method="post">
-                            @Html.AntiForgeryToken()
-                            <input type="hidden" name="roomId" value="@Model.Id" />
-                            <input type="hidden" name="ready" value="@(isReady ? "false" : "true")" />
-                            <button type="submit" class="@(isReady ? "secondary" : "")">
+                        @* Trạng thái sẵn sàng cập nhật bằng RoomParticipantsChanged,
+                           không tải lại trang. *@
+                        <p class="muted">
+                            Sẵn sàng: <strong id="readyCount">@Model.Participants.Count(p => p.IsReady && p.Role == ParticipantRole.Player)</strong>/2
+                            <span id="readyHint" class="muted"></span>
+                        </p>
+
+                        @if (isPlayer)
+                        {
+                            <button type="button" id="btnReady" data-ready="@(isReady ? "true" : "false")">
                                 @(isReady ? "Huỷ sẵn sàng" : "Sẵn sàng")
                             </button>
-                        </form>
+                        }
+                        else
+                        {
+                            <div class="muted">Bạn là khán giả nên không bấm sẵn sàng được.</div>
+                        }
 
                         <div class="row">
                             @{
@@ -292,6 +347,7 @@
 
             </div>
         </div>
+        </div>
 
         <p class="muted" style="margin-top:16px;">
             <a asp-controller="Room" asp-action="Lobby">Về sảnh</a> &middot;
@@ -311,6 +367,7 @@
     <!-- Phải đặt TRƯỚC cotuong.js: file này đọc window.__roomId ngay khi tạo
          Vue app. Không có nó thì roomId rỗng và lệnh JoinRoom sẽ hỏng. -->
     <script>window.__roomId = @Model.Id;</script>
+    <script>window.__myUserId = @currentUserId;</script>
     <script src="/js/cotuong.js"></script>
 
     <script>
@@ -323,12 +380,40 @@
 
         (function () {
             const roomId = window.__roomId;
+            const myUserId = window.__myUserId;
 
-            /* ---------- Bàn cờ: đúng 2 tham số, module không biết SignalR ---------- */
+            /* ---------- Bàn cờ: đúng 2 tham số, module không biết SignalR ----------
+               init() trả về chính đối tượng ChessBoardView (return this) nên
+               window.board dùng được ngay. */
             const boardRoot = document.getElementById('boardRoot');
             if (boardRoot && window.ChessBoardView) {
                 window.board = window.ChessBoardView.init(boardRoot, '/images/');
             }
+
+            /* ---------- Vẽ 32 quân NGAY, không chờ có ván đấu ----------
+               Phòng chờ chưa có MatchUpdated nên bàn trống. Nạp thế cờ
+               khởi tạo từ API ngay khi trang mở, để người chơi thấy bàn cờ
+               thật thay vì khung trống. Khi ván bắt đầu, MatchUpdated sẽ ghi
+               đè bằng thế cờ thật qua applyMatch(). */
+            function loadInitialPieces() {
+                if (!window.board) return Promise.resolve();
+
+                return fetch('/api/BanCo/getboard')
+                    .then(function (response) {
+                        if (!response.ok) throw new Error('HTTP ' + response.status);
+                        return response.json();
+                    })
+                    .then(function (data) {
+                        if (data && Array.isArray(data.pieces) && data.pieces.length) {
+                            window.board.setPieces(data.pieces);
+                        }
+                    })
+                    .catch(function (error) {
+                        console.error('Không nạp được thế cờ khởi tạo:', error);
+                    });
+            }
+
+            loadInitialPieces();
 
             /* ---------- Nút loa ---------- */
             const soundBtn = document.getElementById('soundToggle');
@@ -339,91 +424,240 @@
                 });
             }
 
-            /* ---------- Dung lai connection cua cotuong.js ---------- */
-            // cotuong.js da tu start() va invoke JoinRoom. Neu trang nay tao
-            // connection thu hai thi se vao phong hai lan va nhan trung su kien.
-            function withConnection(fn) {
-                const tryLater = function () {
-                    if (window.MatchConnection && window.MatchConnection.state === 'Connected') {
-                        fn(window.MatchConnection);
-                    } else {
-                        setTimeout(tryLater, 250);
-                    }
+            /* ---------- MỘT connection cho cả trang ----------
+               cotuong.js tự tạo connection riêng nhưng KHÔNG export ra ngoài
+               (createApp(...).mount("#app") không gán vào biến nào), nên bản cũ
+               poll window.MatchConnection — biến này không bao giờ được gán nên
+               handler chưa từng đăng ký, bàn vì thế trống.
+
+               Không lấy được connection đó thì tạo MỘT connection ở đây và tự
+               lo phần vào phòng. Vẫn chỉ có 1 kết nối SignalR thật sự: hub
+               gom theo ConnectionId, nên gọi JoinRoom thêm một lần chỉ cập
+               nhật đúng bản ghi participant (RoomService.AddParticipantAsync
+               update ConnectionId nếu đã có) chứ không tạo người chơi trùng. */
+            const connection = new signalR.HubConnectionBuilder()
+                .withUrl('/chessHub')
+                .withAutomaticReconnect()
+                .build();
+
+            window.MatchConnection = connection;
+
+            let currentMatchId = null;
+
+            connection.on('ReceiveChat', function (message) {
+                const text = (message.kind === 1 && message.sticker) ? message.sticker : message.body;
+
+                window.__chatMessages.push({
+                    userName: message.displayName,
+                    message: text
+                });
+
+                if (typeof window.__onChatReceived === 'function') {
+                    window.__onChatReceived(window.__chatMessages);
+                }
+            });
+
+            /* ---------- Trạng thái ghép ván (chỉ phía client hiển thị) ---------- */
+            let matchStartRequested = false;   // chống bấm/gọi lặp trên máy này
+            let countdownTimer = null;
+
+            function setSeats(participants) {
+                const red = document.getElementById('seatRed');
+                const black = document.getElementById('seatBlack');
+                if (!red || !black) return;
+
+                const findBySide = function (side) {
+                    return (participants || []).find(function (p) { return p.side === side; });
                 };
-                tryLater();
+
+                const redPlayer = findBySide('do');
+                const blackPlayer = findBySide('den');
+
+                red.innerHTML = redPlayer
+                    ? escapeHtml(redPlayer.displayName)
+                    : "<span class='seat-empty'>Trống</span>";
+                black.innerHTML = blackPlayer
+                    ? escapeHtml(blackPlayer.displayName)
+                    : "<span class='seat-empty'>Trống</span>";
             }
 
-            withConnection(function (connection) {
-
-                /* ---------- Chat: mot nguon duy nhat ---------- */
-                connection.on('ReceiveChat', function (message) {
-                    const text = (message.kind === 1 && message.sticker) ? message.sticker : message.body;
-
-                    window.__chatMessages.push({
-                        userName: message.displayName,
-                        message: text
-                    });
-
-                    if (typeof window.__onChatReceived === 'function') {
-                        window.__onChatReceived(window.__chatMessages);
-                    }
+            function escapeHtml(value) {
+                return String(value == null ? '' : value).replace(/[&<>"']/g, function (c) {
+                    return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
                 });
+            }
 
-                /* ---------- Danh sach nguoi + trang thai phong ---------- */
-                connection.on('RoomParticipantsChanged', function (data) {
-                    console.log('RoomParticipantsChanged', data);
-                });
+            function updateReadyUI(participants) {
+                const players = (participants || []).filter(function (p) { return p.role === 'Player'; });
+                const readyCount = players.filter(function (p) { return p.isReady; }).length;
 
-                connection.on('RoomStateChanged', function (data) {
-                    console.log('RoomStateChanged', data);
-                });
+                const el = document.getElementById('readyCount');
+                if (el) el.textContent = readyCount;
 
-                /* ---------- Van dau ---------- */
-                let currentMatchId = null;
-
-                connection.on('MatchStarted', function (payload) {
-                    currentMatchId = payload.matchId;
-                    console.log('MatchStarted', payload);
-                });
-
-                connection.on('MatchUpdated', function (payload) {
-                    currentMatchId = payload.matchId;
-                    if (window.board) {
-                        window.board.applyMatch(payload);
-                    }
-
-                    const turn = document.getElementById('turnStatus');
-                    if (turn) {
-                        turn.textContent = payload.canMove ? 'Den luot ban.' : 'Cho doi thu...';
-                    }
-                });
-
-                /* ---------- Gui nuoc di: ten ham client la SubmitMove ---------- */
-                if (window.board) {
-                    window.board.onMove = function (from, to, pieceId) {
-                        if (!currentMatchId) {
-                            console.warn('Chua co van nao dang dien ra');
-                            return;
-                        }
-
-                        connection.invoke('SubmitMove', currentMatchId, {
-                            pieceId: pieceId,
-                            fromRow: from.row,
-                            fromCol: from.col,
-                            toRow: to.row,
-                            toCol: to.col
-                        }).then(function (result) {
-                            if (result && result.success === false) {
-                                console.warn('Nuoc di bi tu choi:', result.error);
-                            }
-                        }).catch(function (err) {
-                            console.error('Loi gui nuoc di', err);
-                        });
-                    };
+                const hint = document.getElementById('readyHint');
+                if (hint) {
+                    hint.textContent = players.length < 2
+                        ? '(cần đủ 2 người)'
+                        : readyCount >= 2 ? '(đủ, đang bắt đầu...)' : '(chờ đối thủ)';
                 }
 
-                console.log('Da gan su kien cho phong', roomId);
+                const me = players.find(function (p) { return p.userId === myUserId; });
+                const sideLabel = document.getElementById('mySideLabel');
+                if (sideLabel && me) {
+                    sideLabel.textContent = me.side === 'do' ? 'Đỏ' : me.side === 'den' ? 'Đen' : 'Chưa chọn';
+                }
+
+                const btn = document.getElementById('btnReady');
+                if (btn && me) {
+                    btn.dataset.ready = me.isReady ? 'true' : 'false';
+                    btn.textContent = me.isReady ? 'Huỷ sẵn sàng' : 'Sẵn sàng';
+                }
+
+                return { players: players, readyCount: readyCount };
+            }
+
+            /* ---------- Đếm ngược 3-2-1 rồi mới vào ván ---------- */
+            function startCountdownAndStart(participants) {
+                if (matchStartRequested) return;
+
+                const red = participants.find(function (p) { return p.side === 'do'; });
+                const black = participants.find(function (p) { return p.side === 'den'; });
+
+                // Chưa đủ hai ghế thì chưa được bắt đầu
+                if (!red || !black) return;
+
+                matchStartRequested = true;
+
+                const overlay = document.getElementById('countdown');
+                const num = document.getElementById('countdownNum');
+                if (!overlay || !num) return;
+
+                overlay.style.display = 'flex';
+
+                let n = 3;
+                num.textContent = n;
+
+                countdownTimer = setInterval(function () {
+                    n -= 1;
+                    if (n > 0) {
+                        num.textContent = n;
+                        return;
+                    }
+
+                    clearInterval(countdownTimer);
+                    countdownTimer = null;
+                    overlay.style.display = 'none';
+
+                    // Phòng thường: không giới hạn thời gian.
+                    connection.invoke('StartMatch', roomId, red.userId, black.userId, 'unlimited')
+                        .catch(function (err) {
+                            console.error('Không khởi động được ván:', err);
+                            matchStartRequested = false;
+                        });
+                }, 1000);
+            }
+
+            connection.on('RoomParticipantsChanged', function (data) {
+                const people = (data && data.participants) || [];
+                setSeats(people);
+                const state = updateReadyUI(people);
+
+                if (state.players.length >= 2 && state.readyCount >= 2) {
+                    startCountdownAndStart(people);
+                } else {
+                    // Chưa đủ điều kiện thì cho phép thử lại ở lần cập nhật sau
+                    matchStartRequested = false;
+                }
             });
+
+            connection.on('RoomStateChanged', function (data) {
+                console.log('RoomStateChanged', data);
+            });
+
+            connection.on('MatchStarted', function (payload) {
+                currentMatchId = payload.matchId;
+
+                if (countdownTimer) {
+                    clearInterval(countdownTimer);
+                    countdownTimer = null;
+                }
+
+                const overlay = document.getElementById('countdown');
+                if (overlay) overlay.style.display = 'none';
+
+                // Đã vào ván: ẩn phần phòng chờ, chỉ còn bàn cờ.
+                document.body.classList.add('in-match');
+
+                const turn = document.getElementById('turnStatus');
+                if (turn) turn.textContent = 'Ván đã bắt đầu.';
+            });
+
+            /* ---------- Nút sẵn sàng: gọi hub, không POST ---------- */
+            const readyBtn = document.getElementById('btnReady');
+            if (readyBtn) {
+                readyBtn.addEventListener('click', function () {
+                    const next = readyBtn.dataset.ready !== 'true';
+                    connection.invoke('ToggleReady', roomId, next)
+                        .catch(function (err) {
+                            console.error('Không đổi được trạng thái sẵn sàng:', err);
+                        });
+                });
+            }
+
+            connection.on('MatchUpdated', function (payload) {
+                currentMatchId = payload.matchId;
+
+                if (window.board) {
+                    /* applyMatch() tự parse FEN, vẽ lại quân, tô ô hợp lệ,
+                       đổi lượt và xoay bàn theo phe. */
+                    window.board.applyMatch(payload);
+                }
+
+                const turn = document.getElementById('turnStatus');
+                if (turn) {
+                    turn.textContent = payload.canMove ? 'Đến lượt bạn.' : 'Chờ đối thủ...';
+                }
+            });
+
+            /* ---------- Gửi nước đi: tên hàm client là SubmitMove ---------- */
+            if (window.board) {
+                window.board.onMove = function (from, to, pieceId) {
+                    if (!currentMatchId) {
+                        console.warn('Chưa có ván nào đang diễn ra');
+                        return;
+                    }
+
+                    connection.invoke('SubmitMove', currentMatchId, {
+                        pieceId: pieceId,
+                        fromRow: from.row,
+                        fromCol: from.col,
+                        toRow: to.row,
+                        toCol: to.col
+                    }).then(function (result) {
+                        if (result && result.success === false) {
+                            console.warn('Nước đi bị từ chối:', result.error);
+                        }
+                    }).catch(function (err) {
+                        console.error('Lỗi gửi nước đi', err);
+                    });
+                };
+            }
+
+            /* Chỉ vào phòng khi connection ĐÃ ở trạng thái Connected, nếu không
+               invoke sẽ ném "Cannot send data if the connection is not in the
+               Connected State". */
+            connection.start()
+                .then(function () {
+                    if (!roomId || roomId <= 0) return;
+                    return connection.invoke('JoinRoom', roomId, null);
+                })
+                .then(function () {
+                    console.log('Đã vào phòng', roomId);
+                })
+                .catch(function (err) {
+                    console.error('Không kết nối được phòng:', err);
+                });
+
         })();
     </script>
 </body>

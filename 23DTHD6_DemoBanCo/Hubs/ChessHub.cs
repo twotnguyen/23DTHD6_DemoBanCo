@@ -178,8 +178,12 @@ namespace _23DTHD6_DemoBanCo.Hubs
         }
 
         /// <summary>
-        /// Bắt đầu ván trong phòng. Chỉ gọi được bởi lobby sau khi xác nhận cả hai đấu thủ
-        /// đã bấm Ready; hàm này không tự kiểm tra Ready để tránh hai nơi cùng ra quyết định.
+        /// Bắt đầu ván trong phòng.
+        ///
+        /// Chống ghép trùng nằm ở đây chứ không ở client: cả hai đấu thủ đều nhìn thấy
+        /// "2/2 đã sẵn sàng" nên cùng bấm là cùng gọi. Nếu không chặn ở server thì mỗi
+        /// lần gọi tạo một Match, Room.ActiveMatchId bị ghi đè và ván cũ mồ côi.
+        /// Cờ ở client chỉ chặn được máy của người gọi đầu, không chặn được máy còn lại.
         ///
         /// timeMode: "blitz" = 300s, "rapid" = 600s, "standard" = 900s, "unlimited" = 0.
         /// </summary>
@@ -190,10 +194,60 @@ namespace _23DTHD6_DemoBanCo.Hubs
                 throw new HubException("Chưa đăng nhập.");
             }
 
+            // Chốt chặn ghép trùng bằng cập nhật nguyên tử: chỉ một lệnh được đánh dấu
+            // là đang ghép, lệnh còn lại không update được dòng nào nên bị từ chối.
+            // Nếu chỉ đọc ActiveMatchId rồi mới ghi thì hai lệnh cùng lúc đều thấy
+            // phòng trống và cùng tạo ván.
+            int claimed = await _db.Rooms
+                .Where(r => r.Id == roomId
+                    && r.ActiveMatchId == null
+                    && r.Status != RoomStatus.Playing
+                    && !r.IsStartingMatch)
+                .ExecuteUpdateAsync(setters => setters
+                    .SetProperty(r => r.IsStartingMatch, true));
+
+            if (claimed == 0)
+            {
+                await Clients.Caller.SendAsync("RoomActionRejected", new
+                {
+                    roomId,
+                    error = "Phòng đang có ván, không thể bắt đầu ván mới."
+                });
+                return;
+            }
+
+            var room = await _db.Rooms.FirstOrDefaultAsync(r => r.Id == roomId);
+
+            if (room == null)
+            {
+                // Phòng có thể bị xoá giữa lúc đánh dấu và lúc đọc, phải trả khoá lại.
+                await ReleaseStartClaimAsync(roomId);
+                await Clients.Caller.SendAsync("RoomActionRejected", new
+                {
+                    roomId,
+                    error = "Phòng không tồn tại."
+                });
+                return;
+            }
+
+            // Các nhánh từ chối phải trả lại khoá, nếu không phòng sẽ kẹt ở IsStartingMatch
+            // và không bao giờ ghép được ván nữa.
+            if (redUserId == blackUserId)
+            {
+                await ReleaseStartClaimAsync(roomId);
+                await Clients.Caller.SendAsync("RoomActionRejected", new
+                {
+                    roomId,
+                    error = "Hai bên phải là hai người khác nhau."
+                });
+                return;
+            }
+
             int seconds = TimeModeToSeconds(timeMode);
 
             if (seconds < 0)
             {
+                await ReleaseStartClaimAsync(roomId);
                 await Clients.Caller.SendAsync("RoomActionRejected", new
                 {
                     roomId,
@@ -202,8 +256,29 @@ namespace _23DTHD6_DemoBanCo.Hubs
                 return;
             }
 
-            var match = await _matchService.StartMatchAsync(
-                roomId, redUserId, blackUserId, MatchType.Casual, seconds, AiDifficulty.Easy);
+            if (!await AreBothSeatedInRoomAsync(roomId, redUserId, blackUserId))
+            {
+                await ReleaseStartClaimAsync(roomId);
+                await Clients.Caller.SendAsync("RoomActionRejected", new
+                {
+                    roomId,
+                    error = "Hai người chơi phải đang ngồi trong phòng này."
+                });
+                return;
+            }
+
+            Match match;
+            try
+            {
+                match = await _matchService.StartMatchAsync(
+                    roomId, redUserId, blackUserId, MatchType.Casual, seconds, AiDifficulty.Easy);
+            }
+            catch
+            {
+                // Lỗi tạo ván thì trả khoá, nếu không phòng kẹt ở IsStartingMatch mãi mãi.
+                await ReleaseStartClaimAsync(roomId);
+                throw;
+            }
 
             // Hai đấu thủ vào group ván để nhận MatchUpdated, còn khán giả chỉ xem qua
             // group phòng nên không thêm vào đây.
@@ -221,15 +296,20 @@ namespace _23DTHD6_DemoBanCo.Hubs
                 }
             }
 
-            // Ghi ván đang chạy vào phòng để phòng chờ biết có ván để vào xem.
-            var room = await _db.Rooms.FirstOrDefaultAsync(r => r.Id == roomId);
+            // Ghi ván đang chạy vào phòng để phòng chờ biết có ván để vào xem,
+            // đồng thời trả lại khoá vì ghép đã thành công.
+            room.ActiveMatchId = match.Id;
+            room.Status = RoomStatus.Playing;
+            room.IsStartingMatch = false;
 
-            if (room != null)
-            {
-                room.ActiveMatchId = match.Id;
-                room.Status = RoomStatus.Playing;
-                await _db.SaveChangesAsync();
-            }
+            // Ván đã bắt đầu thì bỏ cờ sẵn sàng, nếu không ván sau vẫn thấy "2/2 sẵn sàng".
+            await _db.RoomParticipants
+                .Where(p => p.RoomId == roomId)
+                .ExecuteUpdateAsync(setters => setters.SetProperty(p => p.IsReady, false));
+
+            await _db.SaveChangesAsync();
+
+            await BroadcastRoomStateAsync(roomId);
 
             await Clients.Group(GetRoomGroupName(roomId)).SendAsync("MatchStarted", new
             {
@@ -248,6 +328,28 @@ namespace _23DTHD6_DemoBanCo.Hubs
             "unlimited" => 0,
             _ => -1
         };
+
+        /// <summary>Trả lại khoá ghép ván khi lệnh bị từ chối, để phòng không bị kẹt vĩnh viễn.</summary>
+        private async Task ReleaseStartClaimAsync(int roomId)
+        {
+            await _db.Rooms
+                .Where(r => r.Id == roomId)
+                .ExecuteUpdateAsync(setters => setters.SetProperty(r => r.IsStartingMatch, false));
+        }
+
+        /// <summary>
+        /// Cả hai phải đang ngồi trong phòng và là đấu thủ, không phải khán giả.
+        /// Client tự truyền userId lên nên phải kiểm lại thay vì tin.
+        /// </summary>
+        private async Task<bool> AreBothSeatedInRoomAsync(int roomId, int redUserId, int blackUserId)
+        {
+            int seatedPlayers = await _db.RoomParticipants
+                .CountAsync(p => p.RoomId == roomId
+                    && p.Role == ParticipantRole.Player
+                    && (p.UserId == redUserId || p.UserId == blackUserId));
+
+            return seatedPlayers == 2;
+        }
 
         // =========================================
         // Ván đấu: nước đi, đi lại, kết thúc
@@ -476,6 +578,7 @@ namespace _23DTHD6_DemoBanCo.Hubs
 
             room.ActiveMatchId = null;
             room.Status = RoomStatus.Finished;
+            room.IsStartingMatch = false;
 
             // Bỏ sạch cờ sẵn sàng để ván sau bắt đầu từ đầu.
             await _db.RoomParticipants

@@ -1,0 +1,104 @@
+@model ChangeUsernameViewModel
+
+@{
+    ViewData["Title"] = "Đổi tên đăng nhập";
+    string? currentUsername = ViewData["CurrentUsername"] as string;
+    string? readOnlyEmail = ViewData["ReadOnlyEmail"] as string;
+    string? devCode = ViewData["DevCodeHint"] as string;
+    string? viewError = ViewData["ErrorMessage"] as string;
+}
+
+<div class="container py-4">
+    <h1 class="h3 mb-1">Đổi tên đăng nhập</h1>
+    <p class="text-muted">4 bước: gửi mã &rarr; nhập mã &rarr; mở khoá &rarr; đặt tên mới</p>
+
+    @if (!string.IsNullOrEmpty(viewError))
+    {
+        <div class="alert alert-danger" role="alert">@viewError</div>
+    }
+
+    @if (!string.IsNullOrEmpty(Model.ErrorMessage))
+    {
+        <div class="alert alert-danger" role="alert">@Model.ErrorMessage</div>
+    }
+
+    <div class="card">
+        <div class="card-body">
+            @* Tên hiện tại và email: chỉ đọc, KHÔNG cho đổi *@
+            <div class="mb-3">
+                <label class="form-label">Tên đăng nhập hiện tại</label>
+                <input value="@currentUsername" class="form-control" disabled readonly />
+            </div>
+
+            <div class="mb-4">
+                <label class="form-label">Email xác thực</label>
+                <input value="@(string.IsNullOrEmpty(readOnlyEmail) ? "(tài khoản Khách không có email)" : readOnlyEmail)"
+                       class="form-control" disabled readonly />
+                <div class="form-text">Email không thể thay đổi. Mã xác thực được gửi tới địa chỉ này.</div>
+            </div>
+
+            @* BƯỚC 1: bấm Gửi mã, sinh OTP gắn vào email hiện tại *@
+            @if (!string.IsNullOrEmpty(readOnlyEmail))
+            {
+                <form method="post" asp-controller="Account" asp-action="ChangeUsernameSendCode" class="mb-4">
+                    <button type="submit" class="btn btn-outline-primary">Gửi mã xác thực</button>
+                </form>
+            }
+            else
+            {
+                <div class="alert alert-secondary" role="alert">
+                    Tài khoản Khách không có email nên không đổi tên đăng nhập được.
+                </div>
+            }
+
+            @* Khung Mã demo: dự án không có SMTP nên mã hiển thị thẳng cho người dùng *@
+            @if (!string.IsNullOrEmpty(devCode))
+            {
+                <div class="alert alert-info" role="alert">
+                    <strong>Mã demo (chế độ thử nghiệm):</strong>
+                    <span class="fs-4 fw-bold ms-2">@devCode</span>
+                </div>
+            }
+
+            @* BƯỚC 2 và 3: nhập OTP. Sai quá 5 lần thì mã bị huỷ, phải gửi lại. *@
+            @if (!string.IsNullOrEmpty(readOnlyEmail) && !Model.Unlocked)
+            {
+                <form method="post" asp-controller="Account" asp-action="ChangeUsernameVerifyOtp">
+                    <div class="mb-3">
+                        <label for="Code" class="form-label">Mã xác thực</label>
+                        <input name="Code" id="Code" class="form-control" inputmode="numeric" autocomplete="one-time-code"
+                               placeholder="6 chữ số" maxlength="6" />
+                        <div class="form-text">Mã hết hạn sau 3 phút. Sai quá 5 lần thì phải yêu cầu mã mới.</div>
+                    </div>
+
+                    <button type="submit" class="btn btn-primary">Xác minh mã</button>
+                </form>
+            }
+
+            @* BƯỚC 4: chỉ mở khoá sau khi OTP đúng ở bước 2-3 *@
+            @if (Model.Unlocked)
+            {
+                <div class="alert alert-success" role="alert">Đã xác minh. Nhập tên đăng nhập mới bên dưới.</div>
+
+                <form method="post" asp-controller="Account" asp-action="ChangeUsernameSave">
+                    <div class="mb-3">
+                        <label asp-for="NewUsername" class="form-label">Tên đăng nhập mới</label>
+                        <input asp-for="NewUsername" class="form-control" maxlength="20" autofocus />
+                        <div class="form-text">3 đến 20 ký tự, chỉ gồm chữ, số và dấu gạch dưới. Phải chưa có người dùng.</div>
+                        <span asp-validation-for="NewUsername" class="text-danger"></span>
+                    </div>
+
+                    <button type="submit" class="btn btn-primary">Lưu tên đăng nhập mới</button>
+                </form>
+            }
+
+            <hr />
+
+            <a asp-controller="Account" asp-action="Profile" class="btn btn-link px-0">&larr; Về hồ sơ</a>
+        </div>
+    </div>
+</div>
+
+@section Scripts {
+    <partial name="_ValidationScriptsPartial" />
+}
