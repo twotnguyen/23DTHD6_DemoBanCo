@@ -181,6 +181,70 @@ namespace _23DTHD6_DemoBanCo.Models
     }
 
     /// <summary>
+    /// Bước cuối của đăng ký qua Google: đặt tên đăng nhập và mật khẩu để đăng nhập kép được.
+    ///
+    /// KHÔNG có ô nhập email: server đọc email từ Session, không tin hidden field do client gửi lên.
+    /// </summary>
+    public class GoogleSignupViewModel
+    {
+        [Required(ErrorMessage = "Vui lòng nhập tên đăng nhập.")]
+        [RegularExpression("^[a-zA-Z0-9_]{3,20}$", ErrorMessage = "Tên đăng nhập phải từ 3 đến 20 ký tự, chỉ gồm chữ, số và dấu gạch dưới.")]
+        [Display(Name = "Tên đăng nhập")]
+        public string Username { get; set; } = "";
+
+        [Required(ErrorMessage = "Vui lòng nhập mật khẩu.")]
+        [StringLength(100, MinimumLength = 8, ErrorMessage = "Mật khẩu phải có ít nhất 8 ký tự.")]
+        [DataType(DataType.Password)]
+        [Display(Name = "Mật khẩu")]
+        public string Password { get; set; } = "";
+
+        [Required(ErrorMessage = "Vui lòng xác nhận mật khẩu.")]
+        [DataType(DataType.Password)]
+        [Compare(nameof(Password), ErrorMessage = "Mật khẩu xác nhận không khớp.")]
+        [Display(Name = "Xác nhận mật khẩu")]
+        public string ConfirmPassword { get; set; } = "";
+
+        public string? ErrorMessage { get; set; }
+
+        /// <summary>
+        /// Hướng dẫn bổ sung cho người dùng khi không thể tiếp tục, ví dụ khi email đã có tài khoản.
+        /// Rỗng ở các trường hợp bình thường.
+        /// </summary>
+        public string? GuidanceMessage { get; set; }
+    }
+
+    /// <summary>
+    /// Tài khoản Google giả lập cho chế độ demo. Không gọi mạng ra Google,
+    /// danh sách này là dữ liệu cứng trong controller.
+    /// </summary>
+    public class DemoGoogleAccount
+    {
+        public string Email { get; set; } = "";
+
+        public string FullName { get; set; } = "";
+
+        /// <summary>Chữ cái đầu để dựng avatar giả trong giao diện.</summary>
+        public string Initial => string.IsNullOrEmpty(FullName) ? "?" : FullName[..1].ToUpperInvariant();
+    }
+
+    /// <summary>
+    /// Tiến trình đăng ký qua Google, lưu trong Session dạng JSON.
+    /// Chỉ chứa email và họ tên của tài khoản Google đã chọn, KHÔNG chứa mật khẩu.
+    /// Hạn 10 phút như các tiến trình khác.
+    /// </summary>
+    public class GoogleProgress
+    {
+        public string Email { get; set; } = "";
+
+        public string FullName { get; set; } = "";
+
+        public DateTimeOffset ExpiresAt { get; set; }
+
+        [JsonIgnore]
+        public bool IsExpired => DateTimeOffset.UtcNow > ExpiresAt;
+    }
+
+    /// <summary>
     /// Tiến trình đăng ký 3 bước, lưu trong Session dưới dạng JSON.
     ///
     /// KHÔNG lưu PasswordHash ở đây: Session đi qua cookie phiên, để hash mật khẩu vào đó

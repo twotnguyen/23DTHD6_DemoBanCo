@@ -1,0 +1,93 @@
+@model GoogleSignupViewModel
+
+@{
+    ViewData["Title"] = "Hoàn tất đăng ký Google";
+    string? googleEmail = ViewData["GoogleEmail"] as string;
+    string? googleFullName = ViewData["GoogleFullName"] as string;
+}
+
+<div class="auth-page">
+    <div class="auth-card">
+        <h1 class="auth-title">Hoàn tất đăng ký</h1>
+        <p class="auth-subtitle">Bước 2 / 2 &bull; Đặt tên đăng nhập và mật khẩu</p>
+
+        @* Thanh tiến trình 2 bước của luồng Google *@
+        <div class="mb-4">
+            <div class="progress" role="progressbar" aria-label="Tiến trình đăng ký Google">
+                <div class="progress-bar" style="width: 100%">2</div>
+            </div>
+            <small class="text-muted">Bước 1: Chọn tài khoản &rarr; Bước 2: Đặt tên đăng nhập</small>
+        </div>
+
+        @if (!string.IsNullOrEmpty(Model.ErrorMessage))
+        {
+            <div class="alert alert-danger" role="alert">@Model.ErrorMessage</div>
+        }
+
+        @*
+        Email đã có tài khoản: báo lỗi và hướng dẫn quay lại màn hình Đăng nhập.
+        Ẩn form đặt tên đăng nhập vì không thể tiếp tục với email này.
+        *@
+        @if (!string.IsNullOrEmpty(Model.GuidanceMessage))
+        {
+            <div class="alert alert-info" role="alert">
+                @Model.GuidanceMessage
+                <a asp-controller="Account" asp-action="Login" class="alert-link ms-1">Đăng nhập</a>
+            </div>
+        }
+
+        @* Tài khoản Google đã chọn, chỉ đọc *@
+        <div class="mb-3">
+            <label class="form-label">Tài khoản Google</label>
+            <input value="@googleFullName (@googleEmail)" class="form-control" disabled readonly />
+            <div class="form-text">
+                Google đã xác minh email nên không cần mã OTP. Email không thể thay đổi.
+            </div>
+        </div>
+
+        @if (string.IsNullOrEmpty(Model.GuidanceMessage))
+        {
+            @*
+            Không có ô email trong form: server đọc email từ Session, không tin hidden field.
+            Ẩn cả khối này khi email đã có tài khoản vì không thể tiếp tục đăng ký.
+            *@
+            <form method="post" asp-controller="Account" asp-action="GoogleSetup">
+                <div class="mb-3">
+                    <label asp-for="Username" class="form-label">Tên đăng nhập</label>
+                    <input asp-for="Username" class="form-control" autocomplete="username" autofocus />
+                    <div class="form-text">3 đến 20 ký tự, chỉ gồm chữ, số và dấu gạch dưới.</div>
+                    <span asp-validation-for="Username" class="text-danger"></span>
+                </div>
+
+                <div class="mb-3">
+                    <label asp-for="Password" class="form-label">Mật khẩu</label>
+                    <input asp-for="Password" type="password" class="form-control" autocomplete="new-password" />
+                    <div class="form-text">Tối thiểu 8 ký tự. Dùng để đăng nhập không qua Google.</div>
+                    <span asp-validation-for="Password" class="text-danger"></span>
+                </div>
+
+                <div class="mb-3">
+                    <label asp-for="ConfirmPassword" class="form-label">Xác nhận mật khẩu</label>
+                    <input asp-for="ConfirmPassword" type="password" class="form-control" autocomplete="new-password" />
+                    <span asp-validation-for="ConfirmPassword" class="text-danger"></span>
+                </div>
+
+                <button type="submit" class="btn btn-primary w-100">Hoàn tất đăng ký</button>
+            </form>
+        }
+        else
+        {
+            <a class="btn btn-primary w-100" asp-controller="Account" asp-action="Login">
+                Đi tới màn hình Đăng nhập
+            </a>
+        }
+
+        <p class="auth-footer">
+            <a asp-controller="Account" asp-action="GooglePick">Chọn tài khoản khác</a>
+        </p>
+    </div>
+</div>
+
+@section Scripts {
+    <partial name="_ValidationScriptsPartial" />
+}

@@ -157,8 +157,20 @@ namespace _23DTHD6_DemoBanCo.Controllers
                 TempData["ErrorMessage"] = "Bạn đã bị chủ phòng đuổi khỏi phòng này.";
                 return RedirectToAction("Lobby");
             }
+            // Vào thẳng bằng link, QR hay F5 lại trang thì vẫn phải được ghi vào
+            // phòng, nếu không sẽ không thấy ghế và không ready được.
+            var (joinedRoom, joinError) = await JoinRoomAsParticipantAsync(room, userId);
+            if (joinError != null)
+            {
+                TempData["ErrorMessage"] = joinError;
+                return RedirectToAction("Lobby");
+            }
 
+            room = joinedRoom;
+            // Lấy lại từ phòng vừa nạp lại, nếu không biến mine sẽ trỏ tới
+            // danh sách cũ và không có người vừa vào.
             var mine = room.Participants.FirstOrDefault(p => p.UserId == userId);
+
 
             ViewBag.CurrentUserId = userId;
             ViewBag.IsOwner = room.OwnerId == userId;
@@ -174,6 +186,40 @@ namespace _23DTHD6_DemoBanCo.Controllers
             ViewBag.ErrorMessage = TempData["ErrorMessage"];
 
             return View(room);
+        }
+
+        /// <summary>
+        /// Đăng ký người dùng vào phòng: đã có thì chỉ cập nhật, chưa có thì xếp ghế
+        /// và vai trò. Dùng chung cho cả vào bằng mã lẫn mở thẳng /Room/Waiting/{id}
+        /// để không xảy ra tình trạng vào được bằng mã nhưng F5 thì mất ghế.
+        /// Trả về (phòng đã nạp lại, thông điệp lỗi). Thông điệp null nghĩa là vào được.
+        /// </summary>
+        private async Task<(Room Room, string? Error)> JoinRoomAsParticipantAsync(Room room, int userId)
+        {
+            // Đã trong phòng rồi thì không ghi lại, chỉ chờ cập nhật từ hub
+            var existing = room.Participants.FirstOrDefault(p => p.UserId == userId);
+            if (existing != null)
+                return (room, null);
+
+            if (room.Participants.Count >= RoomService.MaxRoomCapacity)
+                return (room, "Phòng đã đủ người, bạn không vào được phòng này nữa.");
+
+            // Ghế còn trống thì làm đấu thủ, hết ghế thì làm khán giả
+            var role = await _roomService.DecideRoleAsync(room, userId);
+            string? side = role == ParticipantRole.Player ? AssignFreeSide(room, userId) : null;
+
+            await _roomService.AddParticipantAsync(room.Id, userId, "", side);
+
+            // AddParticipantAsync chưa gán Role nên set riêng cho người vừa vào
+            var participant = await _roomService.GetParticipantAsync(room.Id, userId);
+            if (participant != null)
+            {
+                participant.Role = role;
+                await _db.SaveChangesAsync();
+            }
+
+            // Nạp lại để phần hiển thị bên dưới thấy đủ người vừa vào
+            return (await _roomService.GetByIdAsync(room.Id) ?? room, null);
         }
 
         /// <summary>Vào phòng bằng mã, chấp nhận cả mã 6 ký tự cũ lẫn mã 8 ký tự mới.</summary>
@@ -205,17 +251,12 @@ namespace _23DTHD6_DemoBanCo.Controllers
             }
 
             // Phòng khoá chỉ mở khi có mã, nên người nhập mã vẫn vào được
-            var role = await _roomService.DecideRoleAsync(room, userId);
-            string? side = AssignFreeSide(room, userId);
-
-            await _roomService.AddParticipantAsync(room.Id, userId, "", side);
-
-            // AddParticipantAsync chưa gán Role nên set riêng cho người vừa vào
-            var participant = await _roomService.GetParticipantAsync(room.Id, userId);
-            if (participant != null)
-                participant.Role = role;
-
-            await _db.SaveChangesAsync();
+            var (_, joinError) = await JoinRoomAsParticipantAsync(room, userId);
+            if (joinError != null)
+            {
+                TempData["ErrorMessage"] = joinError;
+                return RedirectToAction("Lobby");
+            }
 
             return RedirectToAction("Waiting", new { id = room.Id });
         }

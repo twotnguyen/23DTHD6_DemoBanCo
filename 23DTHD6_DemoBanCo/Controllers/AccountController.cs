@@ -34,6 +34,31 @@ namespace _23DTHD6_DemoBanCo.Controllers
         private const string ChangeUsernameProgressKey = "ChangeUsernameProgress";
         private const string UnlockedKey = "ChangeUsernameUnlocked";
         private const string DevCodeKey = "OtpDevCode";
+        private const string GoogleProgressKey = "GoogleProgress";
+
+        /// <summary>Lưu tiến trình chọn tài khoản Google vào Session dạng JSON.</summary>
+        private void SaveGoogleProgress(GoogleProgress progress)
+        {
+            HttpContext.Session.SetString(GoogleProgressKey, JsonSerializer.Serialize(progress));
+        }
+
+        /// <summary>
+        /// Lấy tiến trình Google từ Session. Hết hạn 10 phút hoặc JSON hỏng thì coi như chưa chọn tài khoản.
+        /// Hàm đồng bộ vì có tham số out, async không cho phép (CS1988).
+        /// </summary>
+        private bool TryGetGoogleProgress([NotNullWhen(true)] out GoogleProgress? progress)
+        {
+            progress = ReadJson<GoogleProgress>(GoogleProgressKey);
+
+            if (progress is null || progress.IsExpired)
+            {
+                HttpContext.Session.Remove(GoogleProgressKey);
+                progress = null;
+                return false;
+            }
+
+            return true;
+        }
 
         private readonly AppDbContext _db;
         private readonly AccountService _accounts;
@@ -318,6 +343,138 @@ namespace _23DTHD6_DemoBanCo.Controllers
             }
 
             await SignInAsync(user);
+            return RedirectToAction("Lobby", "Room");
+        }
+
+        // ==================== Đăng ký qua Google (bản demo) ====================
+
+        /// <summary>
+        /// Danh sách tài khoản Google giả lập. Bản demo không có Client ID/Secret
+        /// và không gọi ra Google, nên dữ liệu nằm cứng ở đây.
+        /// </summary>
+        private static readonly DemoGoogleAccount[] DemoGoogleAccounts =
+        {
+            new() { FullName = "Nguyễn Văn A", Email = "nguyenvana@gmail.com" },
+            new() { FullName = "Trần Thị B", Email = "tranthib@gmail.com" },
+            new() { FullName = "Lê Văn C", Email = "levanc@gmail.com" }
+        };
+
+        /// <summary>Màn hình chọn tài khoản Google giả lập.</summary>
+        [HttpGet]
+        public IActionResult GooglePick()
+        {
+            if (User.Identity?.IsAuthenticated == true)
+                return RedirectToAction("Lobby", "Room");
+
+            ViewData["Accounts"] = DemoGoogleAccounts;
+            return View();
+        }
+
+        /// <summary>
+        /// Chọn một tài khoản: lưu email + họ tên vào Session rồi sang bước đặt username/mật khẩu.
+        /// Chỉ chấp nhận email nằm trong danh sách demo, không tin email do client tự gửi lên.
+        /// </summary>
+        [HttpPost]
+        [ValidateAntiForgeryToken]
+        public IActionResult GooglePick(string email, string fullName)
+        {
+            if (User.Identity?.IsAuthenticated == true)
+                return RedirectToAction("Lobby", "Room");
+
+            var chosen = DemoGoogleAccounts.FirstOrDefault(a =>
+                string.Equals(a.Email, email?.Trim(), StringComparison.OrdinalIgnoreCase));
+
+            if (chosen is null)
+            {
+                ViewData["Accounts"] = DemoGoogleAccounts;
+                ViewData["ErrorMessage"] = "Tài khoản không hợp lệ. Vui lòng chọn một tài khoản trong danh sách.";
+                return View();
+            }
+
+            SaveGoogleProgress(new GoogleProgress
+            {
+                Email = chosen.Email,
+                FullName = chosen.FullName,
+                ExpiresAt = DateTimeOffset.UtcNow.Add(ProgressLifetime)
+            });
+
+            return RedirectToAction(nameof(GoogleSetup));
+        }
+
+        /// <summary>
+        /// Bước đặt tên đăng nhập và mật khẩu. Session trống thì quay lại chọn tài khoản Google.
+        /// </summary>
+        [HttpGet]
+        public IActionResult GoogleSetup()
+        {
+            if (User.Identity?.IsAuthenticated == true)
+                return RedirectToAction("Lobby", "Room");
+
+            if (!TryGetGoogleProgress(out var progress))
+                return RedirectToAction(nameof(GooglePick));
+
+            ViewData["GoogleEmail"] = progress.Email;
+            ViewData["GoogleFullName"] = progress.FullName;
+            return View(new GoogleSignupViewModel());
+        }
+
+        /// <summary>
+        /// Hoàn tất đăng ký Google: tạo tài khoản với EmailVerified = true (Google đã tự xác minh,
+        /// không cần OTP), lưu PasswordHash thật để sau này đăng nhập bằng username + mật khẩu.
+        ///
+        /// Email đã có tài khoản thì KHÔNG tạo tài khoản thứ hai, chỉ báo lỗi và hướng về màn hình đăng nhập.
+        /// Email luôn đọc từ Session, không đọc từ hidden field của form.
+        /// </summary>
+        [HttpPost]
+        [ValidateAntiForgeryToken]
+        public async Task<IActionResult> GoogleSetup(GoogleSignupViewModel model)
+        {
+            if (User.Identity?.IsAuthenticated == true)
+                return RedirectToAction("Lobby", "Room");
+
+            if (!TryGetGoogleProgress(out var progress))
+                return RedirectToAction(nameof(GooglePick));
+
+            ViewData["GoogleEmail"] = progress.Email;
+            ViewData["GoogleFullName"] = progress.FullName;
+
+            if (!ModelState.IsValid)
+                return View(model);
+
+            // Email lấy từ Session chứ không phải từ form, nên client không thể đổi sang email khác.
+            // Không redirect khi lỗi: TempData đi qua cookie nên thông báo dễ mất (đặc biệt khi không giữ cookie),
+            // trả về View để câu thông báo luôn hiện ngay tại chỗ người dùng đang thao tác.
+            if (await _accounts.IsEmailTakenAsync(progress.Email))
+            {
+                return View(new GoogleSignupViewModel
+                {
+                    Username = model.Username,
+                    ErrorMessage = "Email này đã được đăng ký.",
+                    GuidanceMessage = "Vui lòng quay lại màn hình Đăng nhập để đăng nhập."
+                });
+            }
+
+            var (user, error) = await _accounts.CreateUserAsync(
+                model.Username,
+                progress.FullName,
+                progress.Email,
+                model.Password,
+                isGuest: false,
+                emailVerified: true);
+
+            if (error != null)
+            {
+                model.ErrorMessage = error;
+                return View(model);
+            }
+
+            // Ghi nhớ email đã xác minh qua Google để ghép tài khoản sau này
+            user.GoogleEmail = progress.Email;
+            await _db.SaveChangesAsync();
+
+            await SignInAsync(user);
+
+            HttpContext.Session.Remove(GoogleProgressKey);
             return RedirectToAction("Lobby", "Room");
         }
 

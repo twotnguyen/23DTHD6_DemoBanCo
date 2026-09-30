@@ -72,16 +72,20 @@ namespace _23DTHD6_DemoBanCo.Services
         }
 
         /// <summary>
-        /// Tạo tài khoản mới. Chưa xác minh email (EmailVerified = false);
+        /// Tạo tài khoản mới. Mặc định chưa xác minh email (EmailVerified = false);
         /// việc bật cờ đó do CompleteRegistrationAsync đảm nhiệm sau khi OTP đúng.
         /// Tài khoản khách (isGuest = true) không lưu hash mật khẩu, vì không có mật khẩu nào để đăng nhập.
+        ///
+        /// emailVerified = true dành cho đăng ký qua Google: Google đã tự xác minh email nên
+        /// không cần gửi OTP. Không có đường nào khác bật cờ này mà không xác minh thật.
         /// </summary>
         public async Task<(User user, string? error)> CreateUserAsync(
             string username,
             string displayName,
             string? email,
             string? password,
-            bool isGuest)
+            bool isGuest,
+            bool emailVerified = false)
         {
             string name = (username ?? "").Trim();
 
@@ -101,7 +105,7 @@ namespace _23DTHD6_DemoBanCo.Services
                 Username = name,
                 DisplayName = string.IsNullOrWhiteSpace(displayName) ? name : displayName.Trim(),
                 Email = mail,
-                EmailVerified = false,
+                EmailVerified = emailVerified,
                 IsGuest = isGuest,
                 Elo = EloCalculator.StartingElo,
                 CreatedAt = DateTime.UtcNow

@@ -691,6 +691,20 @@ namespace _23DTHD6_DemoBanCo.Hubs
 
             await NotifyParticipantsChangedAsync(roomId);
             await BroadcastRoomStateAsync(roomId);
+
+            // Bấm sẵn sàng là sự kiện duy nhất phát ra khi cả hai đã sẵn sàng, nên ván
+            // phải được khởi tạo ngay tại đây. Nếu chờ client gọi StartMatch thì hai
+            // người bấm xong sẽ đứng im vĩnh viễn, không ai tạo ván.
+            await TryStartMatchAsync(roomId);
+        }
+
+        /// <summary>
+        /// Gọi từ server (controller qua IHubContext) khi cả hai vừa bấm sẵn sàng.
+        /// Không kiểm tra lại điều kiện vì điều kiện đã do SetReady đảm bảo.
+        /// </summary>
+        public Task StartMatchWhenBothReady(int roomId)
+        {
+            return TryStartMatchAsync(roomId);
         }
 
         /// <summary>

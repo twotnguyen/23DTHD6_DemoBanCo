@@ -1,0 +1,54 @@
+@{
+    ViewData["Title"] = "Đăng ký bằng Google";
+    var accounts = ViewData["Accounts"] as DemoGoogleAccount[] ?? Array.Empty<DemoGoogleAccount>();
+    string? errorMessage = ViewData["ErrorMessage"] as string;
+}
+
+<div class="auth-page">
+    <div class="auth-card">
+        <h1 class="auth-title">Chọn tài khoản Google</h1>
+        <p class="auth-subtitle">Bước 1 / 2 &bull; Xác định tài khoản dùng để đăng ký</p>
+
+        @if (!string.IsNullOrEmpty(errorMessage))
+        {
+            <div class="alert alert-danger" role="alert">@errorMessage</div>
+        }
+
+        @*
+        Bản demo không có Client ID/Secret và không gọi mạng ra Google.
+        Danh sách dưới đây là dữ liệu cứng, người dùng chọn tài khoản nào thì app lấy email/tên của tài khoản đó.
+        *@
+        <div class="alert alert-info" role="alert">
+            Chế độ demo: không kết nối Google thật, hãy chọn một tài khoản để tiếp tục.
+        </div>
+
+        @if (accounts.Length > 0)
+        {
+            <div class="list-group mb-3">
+                @foreach (var account in accounts)
+                {
+                    @* Mỗi tài khoản là một nút bấm, POST kèm anti-forgery token *@
+                    <form method="post" asp-controller="Account" asp-action="GooglePick">
+                        <input type="hidden" name="email" value="@account.Email" />
+                        <input type="hidden" name="fullName" value="@account.FullName" />
+                        <button type="submit"
+                                class="list-group-item list-group-item-action d-flex align-items-center gap-3 w-100 text-start">
+                            <span class="badge bg-primary rounded-circle p-2" style="width:2.5rem;height:2.5rem;display:inline-flex;align-items:center;justify-content:center;">
+                                @account.Initial
+                            </span>
+                            <span>
+                                <strong class="d-block">@account.FullName</strong>
+                                <small class="text-muted">@account.Email</small>
+                            </span>
+                        </button>
+                    </form>
+                }
+            </div>
+        }
+
+        <p class="auth-footer">
+            Không muốn dùng Google?
+            <a asp-controller="Account" asp-action="Register">Đăng ký bằng email</a>
+        </p>
+    </div>
+</div>
