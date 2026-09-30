@@ -1,0 +1,48 @@
+@model RegisterStep2ViewModel
+
+@{
+    ViewData["Title"] = "Đăng ký - Bước 2/3";
+}
+
+<div class="auth-page">
+    <div class="auth-card">
+        <h1 class="auth-title">Xác nhận email</h1>
+        <p class="auth-subtitle">Bước 2 / 3 &bull; Nhập email để nhận mã xác thực</p>
+
+        @* Thanh tiến trình 3 bước *@
+        <div class="mb-4">
+            <div class="progress" role="progressbar" aria-label="Tiến trình đăng ký">
+                <div class="progress-bar" style="width: 66%">2</div>
+            </div>
+            <small class="text-muted">Bước 1: Tài khoản &rarr; Bước 2: Email &rarr; Bước 3: Mã xác thực</small>
+        </div>
+
+        @if (!string.IsNullOrEmpty(Model.ErrorMessage))
+        {
+            <div class="alert alert-danger" role="alert">@Model.ErrorMessage</div>
+        }
+
+        @*
+        BƯỚC 2: chỉ lưu email vào tiến trình, chưa tạo tài khoản và chưa gửi mã.
+        Bấm nút này mới chuyển sang bước 3 nơi sinh mã OTP.
+        *@
+        <form method="post" asp-controller="Account" asp-action="RegisterStep2">
+            <div class="mb-3">
+                <label asp-for="Email" class="form-label">Email</label>
+                <input asp-for="Email" type="email" class="form-control" autocomplete="email" autofocus />
+                <div class="form-text">Email là định chỉ xác thực và không thể thay đổi sau khi đăng ký.</div>
+                <span asp-validation-for="Email" class="text-danger"></span>
+            </div>
+
+            <button type="submit" class="btn btn-primary w-100">Gửi mã xác thực</button>
+        </form>
+
+        <p class="auth-footer">
+            Email đã có tài khoản? Hãy <a asp-controller="Account" asp-action="Login">đăng nhập</a> thay vì đăng ký mới.
+        </p>
+    </div>
+</div>
+
+@section Scripts {
+    <partial name="_ValidationScriptsPartial" />
+}

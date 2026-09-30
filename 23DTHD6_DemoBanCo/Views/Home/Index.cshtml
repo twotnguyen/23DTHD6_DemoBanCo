@@ -1,31 +1,190 @@
 ﻿<style>
-    .chess-board {
-        position: relative;
-        width: 700px;
-        max-width: 100%;
-        margin: auto;
+    /* ==================================================================
+       BÀN CỜ — nền + quân
+       ================================================================== */
+
+    .board-section {
+        flex: 0 1 700px;
     }
 
-    .board-image {
+    /* Khung chứa bàn cờ. ChessBoardView gắn class 'chess-board' vào #boardRoot
+       và dựng bên trong: ảnh nền + lớp quân + các lớp ô tô. */
+    #boardRoot {
+        position: relative;
+        width: 100%;
+        max-width: 700px;
+        margin: 0 auto;
+        user-select: none;
+        -webkit-user-select: none;
+        touch-action: none;
+    }
+
+    #boardRoot img.board-image {
         display: block;
         width: 100%;
         height: auto;
+        pointer-events: none;
+        -webkit-user-drag: none;
     }
 
-    .piece {
+    /* Lớp chứa quân: phủ đúng bằng khung bàn, không chặn click xuống nền. */
+    .xb-layer {
+        position: absolute;
+        inset: 0;
+    }
+
+    /* Quân: width 7% khớp gần đúng 1/9 chiều ngang bàn cờ, height auto để
+       giữ đúng tỉ lệ của ảnh SVG. */
+    .xb-piece {
         position: absolute;
         width: 7%;
         height: auto;
         transform: translate(-50%, -50%);
-        cursor: pointer;
         z-index: 10;
-        transition: left 0.2s ease, top 0.2s ease;
+        /* Chuyển động mượt: dùng cho cả kéo-thả lẫn snap-back về ô cũ */
+        transition: left 0.18s ease, top 0.18s ease, transform 0.18s ease;
+        pointer-events: auto;
+        -webkit-user-drag: none;
     }
 
-        .piece.selected {
-            filter: drop-shadow(0 0 5px blue);
-            transform: translate(-50%, -50%) scale(1.15);
-        }
+    /* Đang kéo: tắt transition để quân bám con trỏ, đồng thời nâng lên trên
+       cùng để không bị quân khác che mất. */
+    .xb-piece.xb-dragging {
+        transition: none;
+        z-index: 40;
+        filter: drop-shadow(0 3px 6px rgba(0, 0, 0, 0.45));
+        cursor: grabbing;
+    }
+
+    /* Nhảy vị trí khi đặt lần đầu (mount) — không muốn trượt từ 0,0. */
+    .xb-piece.xb-noanim {
+        transition: none;
+    }
+
+    /* ==================================================================
+       TRỢ NĂNG DT-21 — phân biệt phe KHÔNG dựa vào màu
+       Người mù màu không phân biệt được hoa văn đỏ/đen, nên mỗi phe có
+       thêm một viền khác nhau: đỏ = viền đỏ đậm, đen = viền xanh đen.
+       ================================================================== */
+
+    .xb-piece.xb-side-red {
+        border-radius: 50%;
+        box-shadow: 0 0 0 2px #d32f2f, 0 1px 3px rgba(0, 0, 0, 0.35);
+    }
+
+    .xb-piece.xb-side-black {
+        border-radius: 50%;
+        box-shadow: 0 0 0 2px #1565c0, 0 1px 3px rgba(0, 0, 0, 0.35);
+    }
+
+    /* ==================================================================
+       CÁC LỚP Ô TÔ
+       Tất cả đều position:absolute, canh tâm bằng translate(-50%,-50%)
+       để khớp với vị trí quân.
+       ================================================================== */
+
+    .xb-marker {
+        position: absolute;
+        transform: translate(-50%, -50%);
+        pointer-events: none;
+        z-index: 5;
+    }
+
+    /* Ô đến được: chấm xanh mờ ở giữa ô. */
+    .xb-marker-target {
+        width: 4.2%;
+        padding-bottom: 4.2%;
+        height: 0;
+        border-radius: 50%;
+        background: rgba(25, 135, 84, 0.45);
+    }
+
+    /* Ô có quân đối phủ sắp bị bắt: vòng đỏ nhấp nháy. */
+    .xb-marker-capture {
+        width: 8.4%;
+        padding-bottom: 8.4%;
+        height: 0;
+        border-radius: 50%;
+        border: 2px solid #d32f2f;
+        box-sizing: border-box;
+        animation: xb-blink 1s ease-in-out infinite;
+    }
+
+    /* Nước vừa đi: ô xuất phát và ô đích viền vàng/cam. */
+    .xb-marker-last {
+        width: 8.4%;
+        padding-bottom: 8.4%;
+        height: 0;
+        border-radius: 4px;
+        border: 2px solid #ff8f00;
+        box-sizing: border-box;
+    }
+
+    /* Tướng đang bị chiếu: viền đỏ đậm + rung nhẹ. */
+    .xb-marker-check {
+        width: 8.8%;
+        padding-bottom: 8.8%;
+        height: 0;
+        border-radius: 50%;
+        border: 3px solid #d32f2f;
+        box-sizing: border-box;
+        animation: xb-shake 0.5s ease-in-out infinite;
+    }
+
+    /* Quân đang được chọn: vòng sáng viền quân. */
+    .xb-selection {
+        position: absolute;
+        width: 8.4%;
+        padding-bottom: 8.4%;
+        height: 0;
+        transform: translate(-50%, -50%);
+        border-radius: 50%;
+        border: 2px dashed #1a73e8;
+        box-sizing: border-box;
+        pointer-events: none;
+        z-index: 20;
+    }
+
+    @@keyframes xb-blink {
+        0%, 100% { opacity: 0.35; }
+        50% { opacity: 1; }
+    }
+
+    @@keyframes xb-shake {
+        0%, 100% { transform: translate(-50%, -50%) scale(1); }
+        25% { transform: translate(-50%, -50%) scale(1.06); }
+        75% { transform: translate(-50%, -50%) scale(0.98); }
+    }
+
+    /* Dòng nhắc lượt đi / lý do không khoá được bàn. */
+    .xb-status {
+        text-align: center;
+        font-size: 14px;
+        color: #555;
+        margin-top: 10px;
+        min-height: 18px;
+    }
+
+    /* Nút loa ở góc bàn cờ. */
+    .board-toolbar {
+        display: flex;
+        justify-content: flex-end;
+        gap: 8px;
+        margin-bottom: 8px;
+    }
+
+    .board-toolbar button {
+        border: 1px solid #ccc;
+        background: #fff;
+        border-radius: 5px;
+        padding: 4px 10px;
+        cursor: pointer;
+        font-size: 13px;
+    }
+
+    .board-toolbar button:hover {
+        background: #f2f2f2;
+    }
 
     .game-layout {
         display: flex;
@@ -36,50 +195,9 @@
         margin-top: 20px;
     }
 
-
-    /* ==========================
-       BÀN CỜ
-       ========================== */
-
-    .board-section {
-        flex: 0 1 700px;
-    }
-
-
-    .chess-board {
-        position: relative;
-        width: 100%;
-        max-width: 700px;
-    }
-
-
-    .board-image {
-        display: block;
-        width: 100%;
-        height: auto;
-    }
-
-
-    .piece {
-        position: absolute;
-        width: 7%;
-        height: auto;
-        transform: translate(-50%, -50%);
-        cursor: pointer;
-        z-index: 10;
-        transition: left 0.2s ease, top 0.2s ease;
-    }
-
-
-        .piece.selected {
-            filter: drop-shadow( 0 0 6px blue );
-            transform: translate(-50%, -50%) scale(1.15);
-        }
-
-
-    /* ==========================
-       CHAT
-       ========================== */
+    /* ==================================================================
+       CHAT — giữ nguyên khung cũ (Vue điều khiển)
+       ================================================================== */
 
     .chat-panel {
         width: 320px;
@@ -92,7 +210,6 @@
         overflow: hidden;
     }
 
-
     .chat-header {
         padding: 15px;
         font-size: 18px;
@@ -100,15 +217,13 @@
         border-bottom: 1px solid #ddd;
     }
 
-
-        .chat-header small {
-            display: block;
-            margin-top: 3px;
-            font-size: 12px;
-            font-weight: normal;
-            color: #777;
-        }
-
+    .chat-header small {
+        display: block;
+        margin-top: 3px;
+        font-size: 12px;
+        font-weight: normal;
+        color: #777;
+    }
 
     .chat-messages {
         flex: 1;
@@ -117,24 +232,17 @@
         text-align: left;
     }
 
-
     .chat-message {
         padding: 7px 5px;
         border-bottom: 1px solid #eee;
         word-break: break-word;
     }
 
-
     .no-message {
         margin-top: 20px;
         text-align: center;
         color: #999;
     }
-
-
-    /* ==========================
-       INPUT CHAT
-       ========================== */
 
     .chat-input {
         display: flex;
@@ -143,63 +251,48 @@
         border-top: 1px solid #ddd;
     }
 
+    .chat-input input {
+        flex: 1;
+        min-width: 0;
+        padding: 9px;
+        border: 1px solid #ccc;
+        border-radius: 5px;
+        outline: none;
+    }
 
-        .chat-input input {
-            flex: 1;
-            min-width: 0;
-            padding: 9px;
-            border: 1px solid #ccc;
-            border-radius: 5px;
-            outline: none;
-        }
-
-
-        .chat-input button {
-            padding: 9px 15px;
-            border: none;
-            border-radius: 5px;
-            cursor: pointer;
-        }
+    .chat-input button {
+        padding: 9px 15px;
+        border: none;
+        border-radius: 5px;
+        cursor: pointer;
+    }
 </style>
 
 <div id="app">
 
     <div class="game-layout">
 
-
-        <!-- ========================= -->
-        <!-- BÀN CỜ -->
-        <!-- ========================= -->
+        <!-- ==========================================================
+             BÀN CỜ — do ChessBoardView dựng, KHÔNG phải Vue render
+             ========================================================== -->
 
         <div class="board-section">
 
             <h2>Game Cờ Tướng</h2>
 
-            <div class="chess-board"
-                 ref="board"
-                 @@click="moveTo">
-
-                <img class="board-image"
-                     src="/images/bancotuong.jpg"
-                     draggable="false" />
-
-
-                <img v-for="piece in pieces"
-                     :key="piece.id"
-                     :src="'/images/' + piece.file"
-                     class="piece"
-                     :class="{
-                        selected:
-                            selectedPiece?.id === piece.id
-                     }"
-                     :style="getPieceStyle(piece)"
-                     @@click.stop="selectPiece(piece)"
-                     draggable="false" />
-
+            <div class="board-toolbar">
+                <button type="button"
+                        id="soundToggle"
+                        title="Bật / tắt âm thanh">
+                    &#128266; &#8963;
+                </button>
             </div>
 
-        </div>
+            <!-- ChessBoardView.init() gọi innerHTML = '' rồi dựng lại bên trong
+                 nên nội dung bên trong thẻ này chỉ là chỗ trống chờ. -->
+            <div id="boardRoot"></div>
 
+        </div>
 
         <div class="video-panel">
 
@@ -223,7 +316,6 @@
 
                 </div>
 
-
                 <!-- VIDEO ĐỐI THỦ -->
 
                 <div class="video-box">
@@ -236,12 +328,9 @@
                     <span>Đối thủ</span>
 
                 </div>
-
             </div>
 
-
             <div class="video-buttons">
-
                 <button type="button"
                         @@click="startCall">
                     Gọi video
@@ -267,9 +356,9 @@
         </div>
 
 
-        <!-- ========================= -->
-        <!-- CHAT -->
-        <!-- ========================= -->
+        <!-- ==========================================================
+             CHAT — giữ nguyên khung Vue cũ
+             ========================================================== -->
 
         <div class="chat-panel">
 
@@ -315,7 +404,7 @@
 
 
             <!-- NHẬP CHAT -->
-           
+
             <div class="chat-input">
 
                 <input type="text"
@@ -332,7 +421,6 @@
                 </button>
 
             </div>
-           
 
         </div>
 
@@ -342,5 +430,212 @@
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/microsoft-signalr/8.0.7/signalr.min.js"></script>
 
-<script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+<script src="https://unpkg.com/vue@@3/dist/vue.global.js"></script>
+
+<!-- Bản cờ và âm thanh phải nạp TRƯỚC cotuong.js: cotuong.js sẽ tra
+     window.ChessBoardView / window.SoundBoard để nối sự kiện. -->
+<script src="/js/audio.js"></script>
+<script src="/js/chess-board.js"></script>
+
 <script src="/js/cotuong.js"></script>
+
+<script>
+    /* ==================================================================
+       NỐI BÀN CỜ
+
+       ChessBoardView tự dựng giao diện. Việc ở đây chỉ là:
+         - nạp vị trí 32 quân từ API
+         - nối onMove để gửi nước đi
+         - nối nút loa
+       Không có Vue nào render phần quân.
+       ================================================================== */
+    (function () {
+        'use strict';
+
+        const boardRoot = document.getElementById('boardRoot');
+        if (!boardRoot) return;
+
+        /* Khởi tạo. Dùng đường dẫn /images/ khớp với tên file Hán-Việt
+           (xeden1.svg, totdo5.svg...) đã có sẵn trong wwwroot/images. */
+        const board = ChessBoardView.init(boardRoot, '/images/');
+
+        /* Đưa ra window để phần SignalR (realtime) gọi trực tiếp:
+             ChessBoard.setLegalMoves(payload.legalMoves)
+             ChessBoard.setTurnState({ yourSide, canMove, status })
+             ChessBoard.setLastMove(payload.lastMove.from, payload.lastMove.to)
+             ChessBoard.setPieces(...)
+        */
+        window.ChessBoard = board;
+
+        /* Khai báo ở đầu hàm, KHÔNG để const trong khối if: board.onMove
+           được gán trước khối if nhưng lại tham chiếu connection, nếu khai
+           báo bên trong if thì sẽ rơi vào vùng chết (TDZ) và mọi cú click
+           đều ném lỗi. */
+        const params = new URLSearchParams(window.location.search);
+        const roomId = parseInt(params.get('roomId') || '0', 10);
+        let currentMatchId = null;
+        let connection = null;
+
+
+        /* ------------------------------------------------------------
+           Nước đi: người chơi chọn xong bằng click hoặc kéo-thả.
+           Gửi lên hub bằng SubmitMove(matchId, move) — move BẮT BUỘC có
+           pieceId (string) cùng 4 toạ độ, khớp với ChessMove của server.
+
+           Âm thanh: phát ngay khi bấm, không chờ server trả lời, để thao
+           tác không bị trễ. Nếu server từ chối thì ván đồng bộ lại từ
+           MatchUpdated nên không lệch.
+           ------------------------------------------------------------ */
+        board.onMove = function (from, to, pieceId) {
+            const move = {
+                pieceId: pieceId,
+                fromRow: from.row, fromCol: from.col,
+                toRow: to.row, toCol: to.col
+            };
+
+            if (!connection || connection.state !== signalR.HubConnectionState.Connected) {
+                board.setStatus('Chưa kết nối phòng.');
+                return;
+            }
+
+            if (!currentMatchId) {
+                board.setStatus('Chưa có ván đấu.');
+                return;
+            }
+
+            board.setCapturable([]);
+            SoundBoard.playMove();
+
+            connection.invoke('SubmitMove', currentMatchId, move)
+                .then(function (result) {
+                    /* Server từ chối -> trả bàn về trạng thái đúng của nó. */
+                    if (result && result.success === false) {
+                        board.setStatus(result.error || 'Nước đi không hợp lệ.');
+                        SoundBoard.playCheck();
+                    }
+                })
+                .catch(function (error) {
+                    console.error('SubmitMove lỗi:', error);
+                    board.setStatus('Không gửi được nước đi.');
+                });
+        };
+        /* ------------------------------------------------------------
+           NÚT LOA: bật / tắt âm thanh.
+           ------------------------------------------------------------ */
+        const soundToggle = document.getElementById('soundToggle');
+
+        function paintSoundButton() {
+            if (!soundToggle) return;
+            soundToggle.textContent = SoundBoard.isMuted() ? '🔇 Tắt' : '🔊 Bật';
+        }
+
+        if (soundToggle) {
+            /* AudioContext chỉ được phát sau tương tác người dùng —
+               click vào nút là tương tác đầu tiên nên ctx sẽ resume ở đây. */
+            soundToggle.addEventListener('click', function () {
+                SoundBoard.setMuted(!SoundBoard.isMuted());
+                paintSoundButton();
+
+                if (!SoundBoard.isMuted()) {
+                    SoundBoard.playMove();
+                }
+            });
+
+            paintSoundButton();
+        }
+
+        /* ------------------------------------------------------------
+           SIGNALR
+
+           roomId lấy từ query string (?roomId=) để trang này chạy được ở
+           cả phòng chờ lẫn trang bản demo. matchId do server gửi trong
+           RoomStateChanged / MatchUpdated — lúc đầu chưa có nên null.
+           ------------------------------------------------------------ */
+        if (roomId > 0) {
+            connection = new signalR.HubConnectionBuilder()
+                .withUrl('/chessHub')
+                .withAutomaticReconnect()
+                .build();
+
+            window.MatchConnection = connection;
+
+            /* Ván đấu: server gửi FEN + legalMoves + lượt, module tự lo hết. */
+            let wasInCheck = false;
+
+            connection.on('MatchUpdated', function (payload) {
+                currentMatchId = payload.matchId;
+                board.applyMatch(payload);
+
+                if (payload.status === 'FINISHED') {
+                    SoundBoard.playEndGame();
+                }
+
+                /* Chuông chiếu tướng chỉ kêu lúc MỚI chuyển sang bị chiếu,
+                   không kêu lại mỗi nước đi khi vẫn còn bị chiếu. */
+                const nowInCheck = payload.checkSide != null;
+                if (nowInCheck && !wasInCheck) {
+                    SoundBoard.playCheck();
+                }
+                wasInCheck = nowInCheck;
+            });
+
+            /* Chat: payload là MỘT object, không phải 2 tham số rời. */
+            connection.on('ReceiveChat', function (message) {
+                const text = message.kind === 1 && message.sticker
+                    ? message.sticker
+                    : message.body;
+
+                window.__chatMessages = window.__chatMessages || [];
+                window.__chatMessages.push({
+                    userName: message.displayName,
+                    message: text
+                });
+
+                if (typeof window.__onChatReceived === 'function') {
+                    window.__onChatReceived(window.__chatMessages);
+                }
+            });
+
+            connection.on('MoveRejected', function (info) {
+                board.setStatus(info.error || 'Nước đi bị từ chối.');
+                SoundBoard.playCheck();
+            });
+
+            /* JoinRoom là nơi DUY NHẤT ghi ConnectionId thật: /Room/JoinByCode
+               chỉ nhận HTTP nên không có connection nào. Phải gọi sau khi
+               mở hub thì mới vào được group "room:{id}". */
+            connection.start()
+                .then(function () {
+                    return connection.invoke('JoinRoom', roomId, null);
+                })
+                .catch(function (error) {
+                    console.error('Không kết nối được phòng:', error);
+                    board.setStatus('Chưa kết nối được phòng.');
+                });
+        } else {
+            /* Không có roomId -> chỉ chạy bản demo, không mở hub. */
+            board.setStatus('Chế độ xem thử — chưa vào phòng.');
+        }
+
+        /* ------------------------------------------------------------
+           Nạp vị trí 32 quân từ API GET /api/BanCo/getboard.
+           Payload: { board: {...}, pieces: [{ id, type, color, file, row, col }] }
+           Chỉ dùng khi không có ván đấu thật; khi đã vào phòng, vị trí quân
+           do MatchUpdated.fen quyết định và ghi đè lên.
+           ------------------------------------------------------------ */
+        if (roomId <= 0) {
+            fetch('/api/BanCo/getboard')
+                .then(function (response) {
+                    if (!response.ok) throw new Error('HTTP ' + response.status);
+                    return response.json();
+                })
+                .then(function (data) {
+                    board.setPieces(data.pieces || []);
+                })
+                .catch(function (error) {
+                    console.error('Không nạp được vị trí quân:', error);
+                    board.setStatus('Không nạp được vị trí quân.');
+                });
+        }
+    })();
+</script>

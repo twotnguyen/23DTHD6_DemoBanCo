@@ -27,6 +27,9 @@
                         </li>
                         @if (User.Identity?.IsAuthenticated == true)
                         {
+                            <li class="nav-item">
+                                <a class="nav-link text-dark" asp-area="" asp-controller="Room" asp-action="Index">Phòng chơi</a>
+                            </li>
                             <li class="nav-item d-flex align-items-center">
                                 <span class="navbar-text me-2">@User.FindFirst("display_name")?.Value</span>
                             </li>

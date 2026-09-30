@@ -1,0 +1,58 @@
+@model OtpVerifyViewModel
+
+@{
+    ViewData["Title"] = "Đăng ký - Bước 3/3";
+}
+
+<div class="auth-page">
+    <div class="auth-card">
+        <h1 class="auth-title">Xác thực email</h1>
+        <p class="auth-subtitle">Bước 3 / 3 &bull; Nhập mã 6 chữ số đã được gửi tới email của bạn</p>
+
+        @* Thanh tiến trình 3 bước: đang ở bước cuối *@
+        <div class="mb-4">
+            <div class="progress" role="progressbar" aria-label="Tiến trình đăng ký">
+                <div class="progress-bar" style="width: 100%">3</div>
+            </div>
+            <small class="text-muted">Bước 1: Tài khoản &rarr; Bước 2: Email &rarr; Bước 3: Mã xác thực</small>
+        </div>
+
+        @if (!string.IsNullOrEmpty(Model.ErrorMessage))
+        {
+            <div class="alert alert-danger" role="alert">@Model.ErrorMessage</div>
+        }
+
+        @*
+        Khung Mã demo: dự án không có SMTP nên mã được hiển thị thẳng cho người dùng.
+        Trong bản triển khai thật, khung này sẽ bị bỏ và mã gửi qua email.
+        *@
+        @if (!string.IsNullOrEmpty(Model.DevCodeHint))
+        {
+            <div class="alert alert-info" role="alert">
+                <strong>Mã demo (chế độ thử nghiệm):</strong>
+                <span class="fs-4 fw-bold ms-2">@Model.DevCodeHint</span>
+            </div>
+        }
+
+        @* BƯỚC 3: nhập mã OTP. Sai quá 5 lần thì mã bị huỷ, phải xin mã mới. Mã hết hạn sau 3 phút. *@
+        <form method="post" asp-controller="Account" asp-action="VerifyOtp">
+            <div class="mb-3">
+                <label asp-for="Code" class="form-label">Mã xác thực</label>
+                <input asp-for="Code" class="form-control" inputmode="numeric" autocomplete="one-time-code"
+                       placeholder="6 chữ số" maxlength="6" autofocus />
+                <div class="form-text">Mã hết hạn sau 3 phút. Sai quá 5 lần thì phải yêu cầu mã mới.</div>
+                <span asp-validation-for="Code" class="text-danger"></span>
+            </div>
+
+            <button type="submit" class="btn btn-primary w-100">Xác nhận &amp; hoàn tất đăng ký</button>
+        </form>
+
+        <p class="auth-footer">
+            Bạn có thể bỏ qua, tiến trình đăng ký tự hết hạn sau 10 phút.
+        </p>
+    </div>
+</div>
+
+@section Scripts {
+    <partial name="_ValidationScriptsPartial" />
+}

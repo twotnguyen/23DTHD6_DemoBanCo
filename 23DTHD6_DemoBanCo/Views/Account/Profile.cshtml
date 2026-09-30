@@ -1,0 +1,95 @@
+@using _23DTHD6_DemoBanCo.Services
+@model ProfileViewModel
+
+@{
+    ViewData["Title"] = "Hồ sơ";
+    string? tierName = EloCalculator.GetTierName(EloCalculator.GetTier(Model.Elo));
+}
+
+<div class="container py-4">
+    <h1 class="h3 mb-4">Hồ sơ</h1>
+
+    @if (!string.IsNullOrEmpty(Model.SuccessMessage))
+    {
+        <div class="alert alert-success" role="alert">@Model.SuccessMessage</div>
+    }
+
+    @if (!string.IsNullOrEmpty(Model.ErrorMessage))
+    {
+        <div class="alert alert-danger" role="alert">@Model.ErrorMessage</div>
+    }
+
+    <div class="row g-4">
+        <div class="col-md-7">
+            <div class="card">
+                <div class="card-header">Thông tin tài khoản</div>
+                <div class="card-body">
+                    <form method="post" asp-controller="Account" asp-action="Profile">
+                        @* Tên đăng nhập: đã xác minh, muốn đổi phải qua OTP ở trang ChangeUsername *@
+                        <div class="mb-3">
+                            <label class="form-label">Tên đăng nhập</label>
+                            <input value="@Model.Username" class="form-control" disabled />
+                            <div class="form-text">Đã xác minh. Muốn đổi thì dùng nút bên dưới.</div>
+                        </div>
+
+                        @* Email: CHỈ ĐỌC, không có ô nhập, không thể sửa *@
+                        <div class="mb-3">
+                            <label class="form-label">Email</label>
+                            <input value="@(string.IsNullOrEmpty(Model.Email) ? "(tài khoản Khách không có email)" : Model.Email)"
+                                   class="form-control" disabled readonly />
+                            @if (Model.EmailVerified)
+                            {
+                                <div class="form-text text-success">Đã xác minh.</div>
+                            }
+                            else
+                            {
+                                <div class="form-text text-muted">Chưa xác minh.</div>
+                            }
+                            <div class="form-text">Email không thể thay đổi sau khi đăng ký.</div>
+                        </div>
+
+                        @* Tên hiển thị: sửa tự do, KHÔNG cần OTP *@
+                        <div class="mb-3">
+                            <label asp-for="DisplayName" class="form-label">Tên hiển thị</label>
+                            <input asp-for="DisplayName" class="form-control" maxlength="30" />
+                            <div class="form-text">2 đến 30 ký tự, có thể dùng tiếng Việt có dấu.</div>
+                            <span asp-validation-for="DisplayName" class="text-danger"></span>
+                        </div>
+
+                        <button type="submit" class="btn btn-primary">Lưu tên hiển thị</button>
+                    </form>
+                </div>
+            </div>
+        </div>
+
+        <div class="col-md-5">
+            <div class="card mb-3">
+                <div class="card-header">Xếp hạng</div>
+                <div class="card-body">
+                    @if (Model.IsGuest)
+                    {
+                        @* Tài khoản Khách không tính Elo *@
+                        <p class="mb-1">Điểm Elo: <strong>--</strong></p>
+                        <p class="text-muted mb-0">
+                            Tài khoản Khách không được tính điểm Elo. Hãy đăng ký tài khoản để thi đấu xếp hạng.
+                        </p>
+                    }
+                    else
+                    {
+                        <p class="mb-1">Điểm Elo: <strong>@Model.Elo</strong> <span class="text-muted">(@tierName)</span></p>
+                        <p class="mb-0">Thắng @Model.Wins &bull; Thua @Model.Losses &bull; Hoà @Model.Draws</p>
+                    }
+                </div>
+            </div>
+
+            @* Nút chuyển sang luồng đổi tên đăng nhập qua OTP *@
+            <a asp-controller="Account" asp-action="ChangeUsername" class="btn btn-outline-primary w-100">
+                Đổi tên đăng nhập
+            </a>
+        </div>
+    </div>
+</div>
+
+@section Scripts {
+    <partial name="_ValidationScriptsPartial" />
+}

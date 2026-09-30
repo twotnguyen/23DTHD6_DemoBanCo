@@ -1,37 +1,46 @@
-@model RegisterViewModel
+@model RegisterStep1ViewModel
 
 @{
-
-    ViewData["Title"] = "Đăng ký";
+    ViewData["Title"] = "Đăng ký - Bước 1/3";
+    string? errorMessage = ViewData["ErrorMessage"] as string;
 }
-
 
 <div class="auth-page">
     <div class="auth-card">
         <h1 class="auth-title">Đăng ký</h1>
-        <p class="auth-subtitle">Tạo tài khoản để bắt đầu chơi</p>
+        <p class="auth-subtitle">Bước 1 / 3 &bull; Tạo tên đăng nhập và mật khẩu</p>
+
+        @* Thanh tiến trình 3 bước *@
+        <div class="mb-4">
+            <div class="progress" role="progressbar" aria-label="Tiến trình đăng ký">
+                <div class="progress-bar" style="width: 33%">1</div>
+            </div>
+            <small class="text-muted">Bước 1: Tài khoản &rarr; Bước 2: Email &rarr; Bước 3: Mã xác thực</small>
+        </div>
+
+        @if (!string.IsNullOrEmpty(errorMessage))
+        {
+            <div class="alert alert-danger" role="alert">@errorMessage</div>
+        }
 
         @if (!string.IsNullOrEmpty(Model.ErrorMessage))
         {
             <div class="alert alert-danger" role="alert">@Model.ErrorMessage</div>
         }
 
+        @* BƯỚC 1: chỉ cần tên đăng nhập và mật khẩu, chưa có email nên chưa gửi OTP ở đây *@
         <form method="post" asp-controller="Account" asp-action="Register">
             <div class="mb-3">
                 <label asp-for="Username" class="form-label">Tên đăng nhập</label>
                 <input asp-for="Username" class="form-control" autocomplete="username" autofocus />
+                <div class="form-text">3 đến 20 ký tự, chỉ gồm chữ, số và dấu gạch dưới.</div>
                 <span asp-validation-for="Username" class="text-danger"></span>
-            </div>
-
-            <div class="mb-3">
-                <label asp-for="DisplayName" class="form-label">Tên hiển thị</label>
-                <input asp-for="DisplayName" class="form-control" placeholder="Tên sẽ hiện trên bàn cờ" />
-                <span asp-validation-for="DisplayName" class="text-danger"></span>
             </div>
 
             <div class="mb-3">
                 <label asp-for="Password" class="form-label">Mật khẩu</label>
                 <input asp-for="Password" type="password" class="form-control" autocomplete="new-password" />
+                <div class="form-text">Tối thiểu 8 ký tự.</div>
                 <span asp-validation-for="Password" class="text-danger"></span>
             </div>
 
@@ -41,8 +50,15 @@
                 <span asp-validation-for="ConfirmPassword" class="text-danger"></span>
             </div>
 
-            <button type="submit" class="btn btn-primary w-100">Đăng ký</button>
+            <button type="submit" class="btn btn-primary w-100">Tiếp tục &rarr; nhập Email</button>
         </form>
+
+        @* Đăng ký bằng Google: đặt ngay dưới khung Username/Mật khẩu, tách bằng đường kẻ cho nổi bật *@
+        <div class="text-center my-3 text-muted small">HOẶC</div>
+
+        <a class="btn btn-outline-secondary w-100" asp-controller="Account" asp-action="GooglePick">
+            Đăng ký bằng Google
+        </a>
 
         <p class="auth-footer">
             Đã có tài khoản?
