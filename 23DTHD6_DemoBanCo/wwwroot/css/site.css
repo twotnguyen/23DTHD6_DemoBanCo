@@ -20,3 +20,65 @@ html {
 body {
   margin-bottom: 60px;
 }
+
+/* ==========================
+   ĐĂNG KÝ / ĐĂNG NHẬP
+   ========================== */
+
+.auth-page {
+  display: flex;
+  justify-content: center;
+  padding: 40px 0 20px;
+}
+
+.auth-card {
+  width: 100%;
+  max-width: 420px;
+  padding: 30px;
+  background: #fff;
+  border: 1px solid #e5e5e5;
+  border-radius: 12px;
+  box-shadow: 0 .25rem .75rem rgba(0, 0, 0, .05);
+}
+
+.auth-title {
+  margin-bottom: 4px;
+  font-size: 1.6rem;
+  font-weight: 600;
+}
+
+.auth-subtitle {
+  margin-bottom: 22px;
+  color: #6c757d;
+  font-size: .95rem;
+}
+
+.auth-card .form-label {
+  font-weight: 500;
+}
+
+.auth-card .form-control {
+  padding: 9px 12px;
+  border-radius: 6px;
+}
+
+.auth-card .btn-primary {
+  margin-top: 8px;
+  padding: 10px;
+  font-weight: 500;
+}
+
+.auth-footer {
+  margin: 20px 0 0;
+  text-align: center;
+  font-size: .95rem;
+}
+
+.auth-footer a {
+  font-weight: 500;
+  text-decoration: none;
+}
+
+.auth-footer a:hover {
+  text-decoration: underline;
+}

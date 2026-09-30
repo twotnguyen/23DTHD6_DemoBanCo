@@ -1,0 +1,56 @@
+@model RegisterViewModel
+
+@{
+
+    ViewData["Title"] = "Đăng ký";
+}
+
+
+<div class="auth-page">
+    <div class="auth-card">
+        <h1 class="auth-title">Đăng ký</h1>
+        <p class="auth-subtitle">Tạo tài khoản để bắt đầu chơi</p>
+
+        @if (!string.IsNullOrEmpty(Model.ErrorMessage))
+        {
+            <div class="alert alert-danger" role="alert">@Model.ErrorMessage</div>
+        }
+
+        <form method="post" asp-controller="Account" asp-action="Register">
+            <div class="mb-3">
+                <label asp-for="Username" class="form-label">Tên đăng nhập</label>
+                <input asp-for="Username" class="form-control" autocomplete="username" autofocus />
+                <span asp-validation-for="Username" class="text-danger"></span>
+            </div>
+
+            <div class="mb-3">
+                <label asp-for="DisplayName" class="form-label">Tên hiển thị</label>
+                <input asp-for="DisplayName" class="form-control" placeholder="Tên sẽ hiện trên bàn cờ" />
+                <span asp-validation-for="DisplayName" class="text-danger"></span>
+            </div>
+
+            <div class="mb-3">
+                <label asp-for="Password" class="form-label">Mật khẩu</label>
+                <input asp-for="Password" type="password" class="form-control" autocomplete="new-password" />
+                <span asp-validation-for="Password" class="text-danger"></span>
+            </div>
+
+            <div class="mb-3">
+                <label asp-for="ConfirmPassword" class="form-label">Xác nhận mật khẩu</label>
+                <input asp-for="ConfirmPassword" type="password" class="form-control" autocomplete="new-password" />
+                <span asp-validation-for="ConfirmPassword" class="text-danger"></span>
+            </div>
+
+            <button type="submit" class="btn btn-primary w-100">Đăng ký</button>
+        </form>
+
+        <p class="auth-footer">
+            Đã có tài khoản?
+            <a asp-controller="Account" asp-action="Login">Đăng nhập</a>
+        </p>
+    </div>
+</div>
+
+@section Scripts {
+    <partial name="_ValidationScriptsPartial" />
+}
