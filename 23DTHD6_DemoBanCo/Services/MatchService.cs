@@ -103,8 +103,10 @@ namespace _23DTHD6_DemoBanCo.Services
         /// </summary>
         public async Task<MoveResult> SubmitMoveAsync(int matchId, int userId, ChessMove move)
         {
+            // Không Include(m => m.Moves): mọi thứ cần biết về cây nước đi đều tra
+            // thẳng bảng MatchMoves, nên không còn lý do nạp cả cây vào bộ nhớ đệm.
+            // Nạp thêm cũng dễ gây ghi đè nhầm khi cây đã bị lùi ở request trước.
             var match = await _db.Matches
-                .Include(m => m.Moves)
                 .FirstOrDefaultAsync(m => m.Id == matchId);
 
             if (match == null)
@@ -132,11 +134,20 @@ namespace _23DTHD6_DemoBanCo.Services
 
             var board = GameEvaluator.FromFen(match.Fen);
 
-            // Nước lặp: client gửi lại cùng một lệnh (mạng lỗi, bấm 2 lần) thì trả kết quả cũ,
-            // không áp dụng hai lần và không vi phạm luật.
-            var duplicate = FindDuplicateMove(match, move);
+            // Nước lặp: client gửi lại đúng lệnh cũ (mạng lỗi, bấm 2 lần) thì trả kết quả
+            // đã có, không áp dụng hai lần. Tra cứu thẳng bảng MatchMoves vì match.Moves
+            // là ảnh chụp lúc truy vấn, không phản ánh ván sau khi đã lùi.
+            // Chỉ so nước của phe đang đi, nên nếu thật sự lặp lại nước cũ sau khi lùi
+            // thì vẫn được phép đi như luật.
+            bool isDuplicate = await _db.MatchMoves.AnyAsync(m =>
+                m.MatchId == matchId
+                && m.Side == side.Value
+                && m.FromRow == move.FromRow
+                && m.FromCol == move.FromCol
+                && m.ToRow == move.ToRow
+                && m.ToCol == move.ToCol);
 
-            if (duplicate != null)
+            if (isDuplicate)
             {
                 return MoveResult.Ok(match.EndReason);
             }
@@ -168,11 +179,21 @@ namespace _23DTHD6_DemoBanCo.Services
             ChessRules.ApplyMove(board, engineMove);
             string fenAfter = GameEvaluator.ToFen(board, ToEngineSide(opponentSide));
 
+            // Số thứ tự nước đi và nước cha lấy thẳng từ DB, không đọc từ collection
+            // nạp sẵn: nó là ảnh chụp lúc truy vấn, không tự có nước vừa thêm.
+            // Đọc thẳng bảng thì luôn đúng, kể cả vừa có người lùi ván.
+            int moveCount = await _db.MatchMoves.CountAsync(m => m.MatchId == matchId);
+            int? parentMoveId = await _db.MatchMoves
+                .Where(m => m.MatchId == matchId)
+                .OrderByDescending(m => m.Id)
+                .Select(m => (int?)m.Id)
+                .FirstOrDefaultAsync();
+
             var record = new MatchMove
             {
                 MatchId = matchId,
-                ParentMoveId = match.Moves.Count == 0 ? null : match.Moves.Max(m => m.Id),
-                MoveNumber = match.Moves.Count + 1,
+                ParentMoveId = parentMoveId,
+                MoveNumber = moveCount + 1,
                 Side = side.Value,
                 PieceId = move.PieceId,
                 FromRow = move.FromRow,
@@ -184,6 +205,10 @@ namespace _23DTHD6_DemoBanCo.Services
                 CreatedAt = DateTime.UtcNow
             };
 
+            // Phải Add trước khi xét kết thúc ván: nước đi gây ra chiếu hết vẫn là
+            // một nước đi hợp lệ và phải nằm trong cây, không thể bỏ sót.
+            _db.MatchMoves.Add(record);
+
             // ---- Kết thúc ván: chiếu hết / vây khốn / lặp thế ----
             // Tất cả đi qua GameEvaluator để không có chỗ nào tự tính khác đi.
             // EvaluateGameEnd nhận bên sắp đi, tức là bên vừa bị đối phương vừa đánh.
@@ -192,7 +217,15 @@ namespace _23DTHD6_DemoBanCo.Services
 
             if (endReason == MatchEndReason.None)
             {
-                var fenHistory = new List<string>(match.Moves.Select(m => m.FenAfter)) { fenAfter };
+                // Lịch sử thế cờ lấy từ DB rồi thêm FEN vừa có: match.Moves là ảnh
+                // chụp trước khi Add nên không có nước vừa rồi.
+                var fenHistory = await _db.MatchMoves
+                    .Where(m => m.MatchId == matchId)
+                    .OrderBy(m => m.Id)
+                    .Select(m => m.FenAfter)
+                    .ToListAsync();
+
+                fenHistory.Add(fenAfter);
 
                 if (GameEvaluator.IsRepetitionDraw(fenHistory))
                 {
@@ -681,24 +714,6 @@ namespace _23DTHD6_DemoBanCo.Services
                 candidate.FromCol,
                 candidate.ToRow,
                 candidate.ToCol);
-        }
-
-        /// <summary>Nước đã tồn tại y hệt trong cây thì coi như lệnh lặp, không áp dụng lại.</summary>
-        private static MatchMove? FindDuplicateMove(Match match, ChessMove candidate)
-        {
-            foreach (var move in match.Moves)
-            {
-                if (move.FromRow == candidate.FromRow
-                    && move.FromCol == candidate.FromCol
-                    && move.ToRow == candidate.ToRow
-                    && move.ToCol == candidate.ToCol
-                    && move.Side == match.TurnSide)
-                {
-                    return move;
-                }
-            }
-
-            return null;
         }
     }
 }
