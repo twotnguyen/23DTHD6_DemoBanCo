@@ -317,19 +317,10 @@ namespace _23DTHD6_DemoBanCo.Controllers
             return RedirectToAction("Waiting", new { id = roomId });
         }
 
-        /// <summary>Bật hoặc tắt cờ sẵn sàng của chính người đang đăng nhập.</summary>
-        [HttpPost]
-        [ValidateAntiForgeryToken]
-        public async Task<IActionResult> SetReady(int roomId, bool ready)
-        {
-            int userId = CurrentUserId;
-
-            bool ok = await _roomService.SetReadyAsync(roomId, userId, ready);
-            if (!ok)
-                TempData["ErrorMessage"] = "Không đổi được trạng thái sẵn sàng.";
-
-            return RedirectToAction("Waiting", new { id = roomId });
-        }
+        // Không còn action SetReady: nút "Sẵn sàng" gọi hub ToggleReady, và
+        // ToggleReady tự gọi TryStartMatchAsync khi cả hai đã sẵn sàng. Giữ lại
+        // action POST ở đây sẽ tạo thêm một nơi ghi cờ IsReady cạnh tranh với
+        // hub, nên đã bỏ hẳn.
 
         /// <summary>Chủ phòng đổi chế độ công khai / theo mã / khoá.</summary>
         [HttpPost]

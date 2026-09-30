@@ -457,8 +457,7 @@
                 }
             });
 
-            /* ---------- Trạng thái ghép ván (chỉ phía client hiển thị) ---------- */
-            let matchStartRequested = false;   // chống bấm/gọi lặp trên máy này
+            /* ---------- Trạng thái hiển thị của phòng chờ ---------- */
             let countdownTimer = null;
 
             function setSeats(participants) {
@@ -516,17 +515,18 @@
                 return { players: players, readyCount: readyCount };
             }
 
-            /* ---------- Đếm ngược 3-2-1 rồi mới vào ván ---------- */
-            function startCountdownAndStart(participants) {
-                if (matchStartRequested) return;
-
+            /* ---------- Đếm ngược 3-2-1 (đặc tả 2.3) ----------
+               Chỉ để hiển thị. Việc tạo ván đã do server tự làm trong
+               ToggleReady -> TryStartMatchAsync, nên client KHÔNG invoke
+               StartMatch ở đây: làm vậy sẽ thành nguồn tạo ván thứ hai. */
+            function startCountdown(participants) {
                 const red = participants.find(function (p) { return p.side === 'do'; });
                 const black = participants.find(function (p) { return p.side === 'den'; });
 
-                // Chưa đủ hai ghế thì chưa được bắt đầu
+                // Chưa đủ hai ghế thì chưa hiện đồng hồ đếm
                 if (!red || !black) return;
 
-                matchStartRequested = true;
+                if (countdownTimer) return;
 
                 const overlay = document.getElementById('countdown');
                 const num = document.getElementById('countdownNum');
@@ -547,26 +547,19 @@
                     clearInterval(countdownTimer);
                     countdownTimer = null;
                     overlay.style.display = 'none';
-
-                    // Phòng thường: không giới hạn thời gian.
-                    connection.invoke('StartMatch', roomId, red.userId, black.userId, 'unlimited')
-                        .catch(function (err) {
-                            console.error('Không khởi động được ván:', err);
-                            matchStartRequested = false;
-                        });
                 }, 1000);
             }
+
 
             connection.on('RoomParticipantsChanged', function (data) {
                 const people = (data && data.participants) || [];
                 setSeats(people);
                 const state = updateReadyUI(people);
 
+                // Hai đấu thủ đã sẵn sàng: hiện đồng hồ đếm cho tới khi server
+                // báo MatchStarted. Không tự gọi StartMatch ở đây.
                 if (state.players.length >= 2 && state.readyCount >= 2) {
-                    startCountdownAndStart(people);
-                } else {
-                    // Chưa đủ điều kiện thì cho phép thử lại ở lần cập nhật sau
-                    matchStartRequested = false;
+                    startCountdown(people);
                 }
             });
 
@@ -587,6 +580,18 @@
 
                 // Đã vào ván: ẩn phần phòng chờ, chỉ còn bàn cờ.
                 document.body.classList.add('in-match');
+
+                // Vẽ ngay thế cờ khởi tạo, không chờ MatchUpdated tới sau.
+                if (window.board && payload.fen) {
+                    window.board.applyMatch({
+                        fen: payload.fen,
+                        turnSide: payload.turnSide,
+                        yourSide: payload.redUserId === myUserId ? 0
+                            : payload.blackUserId === myUserId ? 1 : -1,
+                        canMove: false,
+                        legalMoves: []
+                    });
+                }
 
                 const turn = document.getElementById('turnStatus');
                 if (turn) turn.textContent = 'Ván đã bắt đầu.';

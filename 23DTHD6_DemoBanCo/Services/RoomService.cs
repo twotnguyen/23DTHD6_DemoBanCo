@@ -274,20 +274,8 @@ namespace _23DTHD6_DemoBanCo.Services
             return true;
         }
 
-        /// <summary>Bật hoặc tắt cờ sẵn sàng của người chơi trong phòng.</summary>
-        public async Task<bool> SetReadyAsync(int roomId, int userId, bool ready)
-        {
-            var participant = await _db.RoomParticipants
-                .FirstOrDefaultAsync(p => p.RoomId == roomId && p.UserId == userId);
-
-            if (participant == null)
-                return false;
-
-            participant.IsReady = ready;
-            await _db.SaveChangesAsync();
-
-            return true;
-        }
+        // Không còn SetReadyAsync: cờ IsReady do hub ToggleReady ghi, và ToggleReady
+        // tự khởi tạo ván khi đủ hai người. Thêm hàm ở đây sẽ là nguồn ghi trùng.
 
         /// <summary>Chuẩn hoá phe về "do" hoặc "den", trả null nếu giá trị không hợp lệ.</summary>
         public static string? NormalizeSide(string? side)
