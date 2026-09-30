@@ -1,0 +1,276 @@
+{
+  "board": {
+    "image": "bancotuong.jpg",
+    "rows": 10,
+    "cols": 9,
+    "coordinate_system": {
+      "origin": "top-left",
+      "row_range": [
+        0,
+        9
+      ],
+      "col_range": [
+        0,
+        8
+      ]
+    }
+  },
+    "pieces": [
+        {
+            "id": "xe_den_1",
+            "type": "xe",
+            "color": "den",
+            "file": "xeden1.svg",
+            "row": 0,
+            "col": 0
+        },
+        {
+            "id": "ma_den_1",
+            "type": "ma",
+            "color": "den",
+            "file": "maden1.svg",
+            "row": 0,
+            "col": 1
+        },
+        {
+            "id": "tuong_den_1",
+            "type": "tuong",
+            "color": "den",
+            "file": "tuongden1.svg",
+            "row": 0,
+            "col": 2
+        },
+        {
+            "id": "si_den_1",
+            "type": "si",
+            "color": "den",
+            "file": "siden1.svg",
+            "row": 0,
+            "col": 3
+        },
+        {
+            "id": "chu_tuong_den",
+            "type": "chu_tuong",
+            "color": "den",
+            "file": "chutuongden.svg",
+            "row": 0,
+            "col": 4
+        },
+        {
+            "id": "si_den_2",
+            "type": "si",
+            "color": "den",
+            "file": "siden2.svg",
+            "row": 0,
+            "col": 5
+        },
+        {
+            "id": "tuong_den_2",
+            "type": "tuong",
+            "color": "den",
+            "file": "tuongden2.svg",
+            "row": 0,
+            "col": 6
+        },
+        {
+            "id": "ma_den_2",
+            "type": "ma",
+            "color": "den",
+            "file": "maden2.svg",
+            "row": 0,
+            "col": 7
+        },
+        {
+            "id": "xe_den_2",
+            "type": "xe",
+            "color": "den",
+            "file": "xeden2.svg",
+            "row": 0,
+            "col": 8
+        },
+        {
+            "id": "phao_den_1",
+            "type": "phao",
+            "color": "den",
+            "file": "phaoden1.svg",
+            "row": 2,
+            "col": 1
+        },
+        {
+            "id": "phao_den_2",
+            "type": "phao",
+            "color": "den",
+            "file": "phaoden2.svg",
+            "row": 2,
+            "col": 7
+        },
+        {
+            "id": "tot_den_1",
+            "type": "tot",
+            "color": "den",
+            "file": "totden1.svg",
+            "row": 3,
+            "col": 0
+        },
+        {
+            "id": "tot_den_2",
+            "type": "tot",
+            "color": "den",
+            "file": "totden2.svg",
+            "row": 3,
+            "col": 2
+        },
+        {
+            "id": "tot_den_3",
+            "type": "tot",
+            "color": "den",
+            "file": "totden3.svg",
+            "row": 3,
+            "col": 4
+        },
+        {
+            "id": "tot_den_4",
+            "type": "tot",
+            "color": "den",
+            "file": "totden4.svg",
+            "row": 3,
+            "col": 6
+        },
+        {
+            "id": "tot_den_5",
+            "type": "tot",
+            "color": "den",
+            "file": "totden5.svg",
+            "row": 3,
+            "col": 8
+        },
+        {
+            "id": "xe_do_1",
+            "type": "xe",
+            "color": "do",
+            "file": "xedo1.svg",
+            "row": 9,
+            "col": 0
+        },
+        {
+            "id": "ma_do_1",
+            "type": "ma",
+            "color": "do",
+            "file": "mado1.svg",
+            "row": 9,
+            "col": 1
+        },
+        {
+            "id": "tuong_do_1",
+            "type": "tuong",
+            "color": "do",
+            "file": "tuongdo1.svg",
+            "row": 9,
+            "col": 2
+        },
+        {
+            "id": "si_do_1",
+            "type": "si",
+            "color": "do",
+            "file": "sido1.svg",
+            "row": 9,
+            "col": 3
+        },
+        {
+            "id": "chu_tuong_do",
+            "type": "chu_tuong",
+            "color": "do",
+            "file": "chutuongdo.svg",
+            "row": 9,
+            "col": 4
+        },
+        {
+            "id": "si_do_2",
+            "type": "si",
+            "color": "do",
+            "file": "sido2.svg",
+            "row": 9,
+            "col": 5
+        },
+        {
+            "id": "tuong_do_2",
+            "type": "tuong",
+            "color": "do",
+            "file": "tuongdo2.svg",
+            "row": 9,
+            "col": 6
+        },
+        {
+            "id": "ma_do_2",
+            "type": "ma",
+            "color": "do",
+            "file": "mado2.svg",
+            "row": 9,
+            "col": 7
+        },
+        {
+            "id": "xe_do_2",
+            "type": "xe",
+            "color": "do",
+            "file": "xedo2.svg",
+            "row": 9,
+            "col": 8
+        },
+        {
+            "id": "phao_do_1",
+            "type": "phao",
+            "color": "do",
+            "file": "phaodo1.svg",
+            "row": 7,
+            "col": 1
+        },
+        {
+            "id": "phao_do_2",
+            "type": "phao",
+            "color": "do",
+            "file": "phaodo2.svg",
+            "row": 7,
+            "col": 7
+        },
+        {
+            "id": "tot_do_1",
+            "type": "tot",
+            "color": "do",
+            "file": "totdo1.svg",
+            "row": 6,
+            "col": 0
+        },
+        {
+            "id": "tot_do_2",
+            "type": "tot",
+            "color": "do",
+            "file": "totdo2.svg",
+            "row": 6,
+            "col": 2
+        },
+        {
+            "id": "tot_do_3",
+            "type": "tot",
+            "color": "do",
+            "file": "totdo3.svg",
+            "row": 6,
+            "col": 4
+        },
+        {
+            "id": "tot_do_4",
+            "type": "tot",
+            "color": "do",
+            "file": "totdo4.svg",
+            "row": 6,
+            "col": 6
+        },
+        {
+            "id": "tot_do_5",
+            "type": "tot",
+            "color": "do",
+            "file": "totdo5.svg",
+            "row": 6,
+            "col": 8
+        }
+    ]
+}

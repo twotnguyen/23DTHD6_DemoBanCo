@@ -1,0 +1,346 @@
+﻿<style>
+    .chess-board {
+        position: relative;
+        width: 700px;
+        max-width: 100%;
+        margin: auto;
+    }
+
+    .board-image {
+        display: block;
+        width: 100%;
+        height: auto;
+    }
+
+    .piece {
+        position: absolute;
+        width: 7%;
+        height: auto;
+        transform: translate(-50%, -50%);
+        cursor: pointer;
+        z-index: 10;
+        transition: left 0.2s ease, top 0.2s ease;
+    }
+
+        .piece.selected {
+            filter: drop-shadow(0 0 5px blue);
+            transform: translate(-50%, -50%) scale(1.15);
+        }
+
+    .game-layout {
+        display: flex;
+        justify-content: center;
+        align-items: flex-start;
+        gap: 25px;
+        width: 100%;
+        margin-top: 20px;
+    }
+
+
+    /* ==========================
+       BÀN CỜ
+       ========================== */
+
+    .board-section {
+        flex: 0 1 700px;
+    }
+
+
+    .chess-board {
+        position: relative;
+        width: 100%;
+        max-width: 700px;
+    }
+
+
+    .board-image {
+        display: block;
+        width: 100%;
+        height: auto;
+    }
+
+
+    .piece {
+        position: absolute;
+        width: 7%;
+        height: auto;
+        transform: translate(-50%, -50%);
+        cursor: pointer;
+        z-index: 10;
+        transition: left 0.2s ease, top 0.2s ease;
+    }
+
+
+        .piece.selected {
+            filter: drop-shadow( 0 0 6px blue );
+            transform: translate(-50%, -50%) scale(1.15);
+        }
+
+
+    /* ==========================
+       CHAT
+       ========================== */
+
+    .chat-panel {
+        width: 320px;
+        height: 600px;
+        display: flex;
+        flex-direction: column;
+        border: 1px solid #ccc;
+        border-radius: 8px;
+        background: white;
+        overflow: hidden;
+    }
+
+
+    .chat-header {
+        padding: 15px;
+        font-size: 18px;
+        font-weight: bold;
+        border-bottom: 1px solid #ddd;
+    }
+
+
+        .chat-header small {
+            display: block;
+            margin-top: 3px;
+            font-size: 12px;
+            font-weight: normal;
+            color: #777;
+        }
+
+
+    .chat-messages {
+        flex: 1;
+        padding: 12px;
+        overflow-y: auto;
+        text-align: left;
+    }
+
+
+    .chat-message {
+        padding: 7px 5px;
+        border-bottom: 1px solid #eee;
+        word-break: break-word;
+    }
+
+
+    .no-message {
+        margin-top: 20px;
+        text-align: center;
+        color: #999;
+    }
+
+
+    /* ==========================
+       INPUT CHAT
+       ========================== */
+
+    .chat-input {
+        display: flex;
+        padding: 10px;
+        gap: 8px;
+        border-top: 1px solid #ddd;
+    }
+
+
+        .chat-input input {
+            flex: 1;
+            min-width: 0;
+            padding: 9px;
+            border: 1px solid #ccc;
+            border-radius: 5px;
+            outline: none;
+        }
+
+
+        .chat-input button {
+            padding: 9px 15px;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+        }
+</style>
+
+<div id="app">
+
+    <div class="game-layout">
+
+
+        <!-- ========================= -->
+        <!-- BÀN CỜ -->
+        <!-- ========================= -->
+
+        <div class="board-section">
+
+            <h2>Game Cờ Tướng</h2>
+
+            <div class="chess-board"
+                 ref="board"
+                 @@click="moveTo">
+
+                <img class="board-image"
+                     src="/images/bancotuong.jpg"
+                     draggable="false" />
+
+
+                <img v-for="piece in pieces"
+                     :key="piece.id"
+                     :src="'/images/' + piece.file"
+                     class="piece"
+                     :class="{
+                        selected:
+                            selectedPiece?.id === piece.id
+                     }"
+                     :style="getPieceStyle(piece)"
+                     @@click.stop="selectPiece(piece)"
+                     draggable="false" />
+
+            </div>
+
+        </div>
+
+
+        <div class="video-panel">
+
+            <div class="video-title">
+                Video Call
+            </div>
+
+            <div class="videos">
+
+                <!-- VIDEO CỦA MÌNH -->
+
+                <div class="video-box">
+
+                    <video ref="localVideo"
+                           autoplay
+                           muted
+                           playsinline>
+                    </video>
+
+                    <span>Bạn</span>
+
+                </div>
+
+
+                <!-- VIDEO ĐỐI THỦ -->
+
+                <div class="video-box">
+
+                    <video ref="remoteVideo"
+                           autoplay
+                           playsinline>
+                    </video>
+
+                    <span>Đối thủ</span>
+
+                </div>
+
+            </div>
+
+
+            <div class="video-buttons">
+
+                <button type="button"
+                        @@click="startCall">
+                    Gọi video
+                </button>
+
+                <button type="button"
+                        @@click="toggleCamera">
+                    Camera
+                </button>
+
+                <button type="button"
+                        @@click="toggleMicrophone">
+                    Micro
+                </button>
+
+                <button type="button"
+                        @@click="endCall">
+                    Kết thúc
+                </button>
+
+            </div>
+
+        </div>
+
+
+        <!-- ========================= -->
+        <!-- CHAT -->
+        <!-- ========================= -->
+
+        <div class="chat-panel">
+
+            <div class="chat-header">
+
+                Phòng chat
+
+                <small>
+                    {{ roomId }}
+                </small>
+
+            </div>
+
+
+            <!-- DANH SÁCH TIN NHẮN -->
+
+            <div class="chat-messages"
+                 ref="chatMessages">
+
+                <div v-if="messages.length === 0"
+                     class="no-message">
+
+                    Chưa có tin nhắn
+
+                </div>
+
+
+                <div v-for="(item, index) in messages"
+                     :key="index"
+                     class="chat-message">
+
+                    <strong>
+                        {{ item.userName }}:
+                    </strong>
+
+                    <span>
+                        {{ item.message }}
+                    </span>
+
+                </div>
+
+            </div>
+
+
+            <!-- NHẬP CHAT -->
+           
+            <div class="chat-input">
+
+                <input type="text"
+                       v-model="chatMessage"
+                       placeholder="Nhập tin nhắn..."
+                       @@keyup.enter="sendMessage" />
+
+
+                <button type="button"
+                        @@click="sendMessage">
+
+                    Gửi
+
+                </button>
+
+            </div>
+           
+
+        </div>
+
+    </div>
+
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/microsoft-signalr/8.0.7/signalr.min.js"></script>
+
+<script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+<script src="/js/cotuong.js"></script>
