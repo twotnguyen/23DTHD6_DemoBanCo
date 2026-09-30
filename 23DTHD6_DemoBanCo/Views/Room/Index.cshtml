@@ -1,0 +1,113 @@
+@{
+    ViewData["Title"] = "Phòng chơi";
+    var myRooms = (List<Room>)ViewBag.MyRooms!;
+    var allRooms = (List<Room>)ViewBag.AllRooms!;
+}
+
+<div class="rooms-page">
+
+    @if (TempData["ErrorMessage"] != null)
+    {
+        <div class="alert alert-warning" role="alert">@TempData["ErrorMessage"]</div>
+    }
+
+    <div class="rooms-header">
+        <h1>Phòng chơi</h1>
+        <a class="btn btn-primary" asp-controller="Room" asp-action="Index">Danh sách phòng</a>
+    </div>
+
+    @* ---------- TẠO PHÒNG ---------- *@
+    <div class="room-card create-card">
+        <h2>Tạo phòng mới</h2>
+        <p class="room-card-hint">Bạn sẽ là chủ phòng và nhận được mã để mời bạn chơi.</p>
+
+        <form method="post" asp-controller="Room" asp-action="Create" class="create-form">
+            <label for="roomName" class="form-label">Tên phòng</label>
+            <input id="roomName" name="name" class="form-control" placeholder="Ví dụ: Phòng của Minh" maxlength="50" />
+            <button type="submit" class="btn btn-primary mt-2">Tạo phòng</button>
+        </form>
+    </div>
+
+    @* ---------- VÀO PHÒNG BẰNG MÃ ---------- *@
+    <div class="room-card">
+        <h2>Vào phòng theo mã</h2>
+        <p class="room-card-hint">Nhập mã phòng mà người khác đã gửi cho bạn.</p>
+
+        <form method="get" asp-controller="Room" asp-action="Join" class="create-form">
+            <label for="roomCode" class="form-label">Mã phòng</label>
+            <input name="code" class="form-control room-code-input" placeholder="Ví dụ: K7F2M9"
+                   maxlength="6" style="text-transform: uppercase;" />
+            <button type="submit" class="btn btn-outline-primary mt-2">Vào phòng</button>
+        </form>
+    </div>
+
+    @* ---------- PHÒNG CỦA TÔI ---------- *@
+    @if (myRooms.Count > 0)
+    {
+        <h2 class="rooms-section-title">Phòng của tôi</h2>
+        <div class="room-list">
+            @foreach (var room in myRooms)
+            {
+                var participants = room.Participants.ToList();
+                <div class="room-card room-item">
+                    <div class="room-item-main">
+                        <a class="room-item-name" asp-controller="Room" asp-action="Details" asp-route-id="@room.Id">
+                            @room.Name
+                        </a>
+                        <span class="room-item-badge">Chủ phòng</span>
+                        <div class="room-item-meta">
+                            <span>Mã: <strong>@room.Code</strong></span>
+                            <span>@participants.Count người</span>
+                            <span>@room.CreatedAt.ToString("dd/MM/yyyy HH:mm")</span>
+                        </div>
+                    </div>
+                    <div class="room-item-actions">
+                        <a class="btn btn-sm btn-primary" asp-controller="Room" asp-action="Details" asp-route-id="@room.Id">
+                            Vào phòng
+                        </a>
+                        <form method="post" asp-controller="Room" asp-action="Delete" asp-route-id="@room.Id"
+                              onsubmit="return confirm('Xoá phòng @room.Name?');">
+                            <button type="submit" class="btn btn-sm btn-outline-danger">Xoá</button>
+                        </form>
+                    </div>
+                </div>
+            }
+        </div>
+    }
+
+    @* ---------- TẤT CẢ PHÒNG ---------- *@
+    <h2 class="rooms-section-title">Tất cả phòng</h2>
+    @if (allRooms.Count == 0)
+    {
+        <div class="room-card">
+            <p class="no-rooms">Chưa có phòng nào. Hãy tạo phòng đầu tiên!</p>
+        </div>
+    }
+    else
+    {
+        <div class="room-list">
+            @foreach (var room in allRooms)
+            {
+                var participants = room.Participants.ToList();
+                <div class="room-card room-item">
+                    <div class="room-item-main">
+                        <a class="room-item-name" asp-controller="Room" asp-action="Details" asp-route-id="@room.Id">
+                            @room.Name
+                        </a>
+                        <div class="room-item-meta">
+                            <span>Mã: <strong>@room.Code</strong></span>
+                            <span>@participants.Count người</span>
+                            <span>Chủ: @room.Owner?.DisplayName</span>
+                        </div>
+                    </div>
+                    <div class="room-item-actions">
+                        <a class="btn btn-sm btn-primary" asp-controller="Room" asp-action="Details" asp-route-id="@room.Id">
+                            Vào phòng
+                        </a>
+                    </div>
+                </div>
+            }
+        </div>
+    }
+
+</div>

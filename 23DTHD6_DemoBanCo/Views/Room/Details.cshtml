@@ -1,0 +1,188 @@
+@model Room
+@{
+    ViewData["Title"] = Model.Name;
+    var isOwner = (bool)ViewBag.IsOwner!;
+    var currentUserId = (int)ViewBag.CurrentUserId!;
+    var participants = Model.Participants.OrderBy(p => p.JoinedAt).ToList();
+}
+
+<div class="room-detail">
+
+    <div class="room-detail-header">
+        <div>
+            <h1>@Model.Name</h1>
+            <p class="room-detail-meta">
+                Mã phòng: <strong class="room-code">@Model.Code</strong>
+                @if (isOwner)
+                {
+                    <span class="room-item-badge">Bạn là chủ phòng</span>
+                }
+            </p>
+        </div>
+        <a class="btn btn-outline-secondary" asp-controller="Room" asp-action="Index">Về danh sách</a>
+    </div>
+
+    @* ---------- MỜI BẠN (chuẩn bị cho yêu cầu 3) ---------- *@
+    <div class="room-card">
+        <h2>Mời bạn chơi</h2>
+        <p class="room-card-hint">Gửi cho bạn một trong hai cách bên dưới.</p>
+
+        <div class="invite-methods">
+            <div class="invite-method">
+                <label class="form-label" for="inviteLink">Link mời</label>
+                <div class="invite-row">
+                    <input id="inviteLink" type="text" class="form-control" readonly
+                           value="@Url.Action("Join", "Room", new { code = Model.Code }, Context.Request.Scheme)" />
+                    <button type="button" class="btn btn-outline-primary" onclick="copyInvite('inviteLink', this)">
+                        Sao chép
+                    </button>
+                </div>
+            </div>
+
+            <div class="invite-method">
+                <label class="form-label" for="inviteCode">Mã phòng</label>
+                <div class="invite-row">
+                    <input id="inviteCode" type="text" class="form-control room-code-input" readonly value="@Model.Code" />
+                    <button type="button" class="btn btn-outline-primary" onclick="copyInvite('inviteCode', this)">
+                        Sao chép
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    @* ---------- NGƯỜI TRONG PHÒNG ---------- *@
+    <div class="room-card">
+        <h2>Người trong phòng (<span id="participantCount">@participants.Count</span> / 2)</h2>
+
+        <p id="noParticipants" class="no-rooms"
+           style="@(participants.Count == 0 ? "" : "display: none;")">
+            Chưa có ai vào phòng. Chia sẻ mã phòng để mời bạn chơi.
+        </p>
+
+        <ul id="participantList" class="participant-list">
+            @foreach (var p in participants)
+            {
+                <li class="participant-item">
+                    <span class="participant-name">@p.User?.DisplayName</span>
+                    @if (p.UserId == Model.OwnerId)
+                    {
+                        <span class="room-item-badge">Chủ phòng</span>
+                    }
+                    @if (p.UserId == currentUserId)
+                    {
+                        <span class="room-item-badge badge-muted">Bạn</span>
+                    }
+                    <span class="participant-time">@p.JoinedAt.ToString("HH:mm")</span>
+                </li>
+            }
+        </ul>
+    </div>
+
+    @* ---------- KHU VỰC CHƠI (yêu cầu 5 sẽ nối vào đây) ---------- *@
+    <div class="room-card">
+        <h2>Bàn cờ</h2>
+        <div class="room-board-placeholder">
+            <p>Phần đánh cờ hai người sẽ hiển thị tại đây.</p>
+            <p class="room-card-hint">
+                Hiện tại hai người chưa được ghép vào nhau trong phòng —
+                phần này thuộc yêu cầu 5.
+            </p>
+        </div>
+    </div>
+
+    @if (isOwner)
+    {
+        <form method="post" asp-controller="Room" asp-action="Delete" asp-route-id="@Model.Id"
+              onsubmit="return confirm('Xoá phòng @Model.Name? Tất cả người chơi sẽ bị đưa ra khỏi phòng.');">
+            <button type="submit" class="btn btn-outline-danger">Xoá phòng</button>
+        </form>
+    }
+
+</div>
+
+@section Scripts {
+    <script>
+        async function copyInvite(inputId, button) {
+            const input = document.getElementById(inputId);
+            const original = button.textContent;
+            try {
+                await navigator.clipboard.writeText(input.value);
+                button.textContent = 'Đã sao chép';
+            } catch {
+                input.select();
+                document.execCommand('copy');
+                button.textContent = 'Đã sao chép';
+            }
+            setTimeout(() => { button.textContent = original; }, 1500);
+        }
+    </script>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/microsoft-signalr/8.0.7/signalr.min.js"></script>
+    <script>
+        const roomId = @Model.Id;
+        const currentUserId = @currentUserId;
+        const isOwner = @(isOwner ? "true" : "false");
+
+        function renderParticipants(payload) {
+            const list = document.getElementById('participantList');
+            const empty = document.getElementById('noParticipants');
+            const counter = document.getElementById('participantCount');
+
+            if (counter) counter.textContent = `${payload.count} / ${payload.capacity}`;
+
+            if (!list) return;
+
+            if (payload.participants.length === 0) {
+                list.innerHTML = '';
+                if (empty) empty.style.display = '';
+                return;
+            }
+
+            if (empty) empty.style.display = 'none';
+
+            list.innerHTML = payload.participants.map(p => {
+                const isMe = p.userId === currentUserId;
+                const isOwnerRow = p.userId === ownerUserId;
+
+                let badges = '';
+                if (isOwnerRow) badges += '<span class="room-item-badge">Chủ phòng</span>';
+                if (isMe) badges += '<span class="room-item-badge badge-muted">Bạn</span>';
+
+                // joinedAt gửi từ server không kèm múi giờ UTC, phải cộng thêm 'Z' mới đúng
+                const time = new Date(p.joinedAt.endsWith('Z') ? p.joinedAt : p.joinedAt + 'Z')
+                    .toTimeString().slice(0, 5);
+                return `<li class="participant-item">
+                            <span class="participant-name"></span>
+                            ${badges}
+                            <span class="participant-time">${time}</span>
+                        </li>`;
+            }).join('');
+
+            // Chèn tên bằng textContent để không bị XSS từ tên người chơi
+            const names = list.querySelectorAll('.participant-name');
+            payload.participants.forEach((p, i) => {
+                if (names[i]) names[i].textContent = p.displayName;
+            });
+        }
+
+        const ownerUserId = @Model.OwnerId;
+
+        async function joinRoom() {
+            const connection = new signalR.HubConnectionBuilder()
+                .withUrl("/chessHub")
+                .withAutomaticReconnect()
+                .build();
+
+            connection.on("RoomParticipantsChanged", renderParticipants);
+
+            connection.onreconnected(async () => {
+                await connection.invoke("JoinRoom", roomId, null);
+            });
+
+            await connection.start();
+            await connection.invoke("JoinRoom", roomId, null);
+        }
+
+        joinRoom().catch(err => console.error("Không kết nối được phòng:", err));
+    </script>
+}

@@ -1,5 +1,6 @@
 using _23DTHD6_DemoBanCo.Data;
 using _23DTHD6_DemoBanCo.Hubs;
+using _23DTHD6_DemoBanCo.Services;
 using Microsoft.EntityFrameworkCore;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -13,6 +14,9 @@ builder.Services.AddSignalR();
 builder.Services.AddDbContext<AppDbContext>(options =>
     options.UseSqlite(builder.Configuration.GetConnectionString("DefaultConnection")));
 
+// Nghiệp vụ phòng chơi
+builder.Services.AddScoped<RoomService>();
+
 // Đăng nhập bằng cookie
 builder.Services.AddAuthentication("Cookie")
     .AddCookie("Cookie", options =>
@@ -25,11 +29,11 @@ builder.Services.AddAuthentication("Cookie")
 
 var app = builder.Build();
 
-// Tạo bảng nếu chưa có, để dự án chạy được ngay không cần bước migration thủ công
+// Áp dụng migration để tạo/cập nhật bảng
 using (var scope = app.Services.CreateScope())
 {
     var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-    db.Database.EnsureCreated();
+    db.Database.Migrate();
 }
 
 // Configure the HTTP request pipeline.
