@@ -109,4 +109,7 @@ app.MapControllerRoute(
     pattern: "{controller=Home}/{action=Index}/{id?}");
 app.MapHub<ChessHub>("/chessHub");
 app.MapHub<MatchmakingHub>("/matchmakingHub");
+app.MapHub<AiHub>("/aiHub");
+
+app.MapHub<SocialHub>("/socialHub");
 app.Run();

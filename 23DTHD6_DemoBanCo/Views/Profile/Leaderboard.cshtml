@@ -1,0 +1,140 @@
+@using System.Globalization
+@using _23DTHD6_DemoBanCo.Services
+
+@{
+    ViewData["Title"] = "Bảng xếp hạng";
+
+    // Dữ liệu đã do LeaderboardService tính sẵn cả tên bậc lẫn tỉ lệ thắng,
+    // tầng trên chỉ hiển thị, không tự tính lại để tránh hai nơi cho hai kết quả.
+    // Ép kiểu thẳng như Lobby.cshtml: ViewBag là dynamic nên không dùng ?? ở đây,
+    // toán tử đó trên dynamic bị trì hoãn sang runtime, ép kiểu thì lỗi lộ ra lúc build.
+    var top = (List<LeaderboardService.LeaderboardRow>)ViewBag.Top;
+    var mine = (LeaderboardService.LeaderboardRow?)ViewBag.Mine;
+    var currentUserId = (int)ViewBag.CurrentUserId;
+    bool mineInTop = (bool)ViewBag.MineInTop;
+
+    // InvariantCulture cho số đơn vị: dấu phẩy thập phân theo vùng thiết bị làm
+    // cột "Tỉ lệ thắng" lệch cột, giữ một chuỗi cố định cho cả bảng.
+    string rate(double value) => value.ToString("0.0", CultureInfo.InvariantCulture) + "%";
+}
+
+<div class="container py-4">
+    <div class="d-flex flex-wrap justify-content-between align-items-end gap-2 mb-3">
+        <div>
+            <h1 class="h3 mb-1">Bảng xếp hạng</h1>
+            <p class="text-muted mb-0">
+                @(top.Count > 0
+                    ? $"Top {top.Count} người chơi đã thi đấu xếp hạng."
+                    : $"Bảng hiển thị tối đa {LeaderboardService.TopCount} người chơi.")
+                Xếp theo Elo giảm dần, hòa Elo thì người thắng nhiều hơn đứng trước.
+            </p>
+        </div>
+        <div class="btn-group" role="group" aria-label="Chuyển trang">
+            <a class="btn btn-outline-primary" asp-controller="Profile" asp-action="Leaderboard">Bảng xếp hạng</a>
+            <a class="btn btn-outline-primary" asp-controller="Profile" asp-action="History">Lịch sử ván đấu</a>
+        </div>
+    </div>
+
+    @if (top.Count == 0)
+    {
+        <div class="alert alert-info" role="alert">
+            Bảng xếp hạng còn trống vì chưa ai thi đấu xếp hạng. Hãy vào
+            <a asp-controller="Room" asp-action="Lobby">sảnh</a> để tìm trận.
+        </div>
+    }
+    else
+    {
+        @* Chiều cao có giới hạn + overflow để khung cuộn được. Bắt buộc với dòng ghim:
+           position: sticky chỉ bám được BÊN TRONG khung cuộn, đặt ngoài thì vô hiệu. *@
+        <div class="card shadow-sm">
+            <div class="table-responsive" style="max-height:62vh; overflow-y:auto;">
+                <table class="table table-sm table-hover align-middle mb-0">
+                    <thead class="table-light">
+                        <tr>
+                            <th scope="col" class="text-center" style="width:72px;">Hạng</th>
+                            <th scope="col">Tên hiển thị</th>
+                            <th scope="col" class="text-end" style="width:88px;">Elo</th>
+                            <th scope="col" style="width:150px;">Bậc</th>
+                            <th scope="col" class="text-center" style="width:80px;">Thắng</th>
+                            <th scope="col" class="text-center" style="width:80px;">Thua</th>
+                            <th scope="col" class="text-center" style="width:80px;">Hoà</th>
+                            <th scope="col" class="text-end" style="width:110px;">Tỉ lệ thắng</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var row in top)
+                        {
+                            bool isMe = row.UserId == currentUserId;
+                            @* fw-semibold chỉ có từ Bootstrap 5.3, bản 5.1.0 dùng fw-bold. *@
+                            <tr class="@(isMe ? "table-warning fw-bold" : null)">
+                                <td class="text-center">
+                                    @row.Rank
+                                    @if (isMe)
+                                    {
+                                        @* text-bg-* chỉ có từ Bootstrap 5.2, bản 5.1.0 ở đây
+                                           không có class đó nên phải ghép bg-* với text-*. *@
+                                        <span class="badge bg-warning text-dark ms-1">Bạn</span>
+                                    }
+                                </td>
+                                @* Razor tự HTML-encode @row.DisplayName, không cần escapeHtml
+                                   thủ công như khi chèn chuỗi qua innerHTML trong JavaScript. *@
+                                <td>@row.DisplayName</td>
+                                <td class="text-end">@row.Elo</td>
+                                <td>@row.TierName</td>
+                                <td class="text-center">@row.Wins</td>
+                                <td class="text-center">@row.Losses</td>
+                                <td class="text-center">@row.Draws</td>
+                                <td class="text-end">@rate(row.WinRate)</td>
+                            </tr>
+                        }
+                    </tbody>
+
+                    @* ============ DÒNG GHIM: thứ hạng của chính người đang xem ============
+                         Nằm ở <tfoot> tức là tách khỏi danh sách, nên không bao giờ
+                         hiện trùng dòng đã tô vàng ở tbody. Bám đáy khung cuộn nên
+                         luôn thấy được kể cả khi bảng dài hơn cửa sổ; z-index để
+                         dòng đang cuộn qua không chồng lên chữ của nó.
+                         Nền phải đục đặc: Bootstrap tô bảng bằng biến --bs-table-bg
+                         chứ không vẽ background-color trực tiếp, nên dòng đang cuộn
+                         qua sẽ lọt hiện dưới dòng ghim. *@
+                    <tfoot style="position:sticky; bottom:0; z-index:5;">
+                        <tr class="table-primary" style="background-color:#cfe2ff;">
+                            @if (mine is null)
+                            {
+                                <td colspan="8" class="text-muted">
+                                    Bạn chưa có thứ hạng. Hãy đánh một ván xếp hạng để bắt đầu tích luỹ Elo.
+                                </td>
+                            }
+                            else
+                            {
+                                <td class="text-center fw-bold" style="width:72px;">#@mine.Rank</td>
+                                <td>
+                                    <span class="fw-bold">@mine.DisplayName</span>
+                                    <span class="badge bg-primary text-white ms-1">Bạn</span>
+                                </td>
+                                <td class="text-end" style="width:88px;">Elo @mine.Elo</td>
+                                <td style="width:150px;">@mine.TierName</td>
+                                <td class="text-center" style="width:80px;">Thắng @mine.Wins</td>
+                                <td class="text-center" style="width:80px;">Thua @mine.Losses</td>
+                                <td class="text-center" style="width:80px;">Hoà @mine.Draws</td>
+                                <td class="text-end" style="width:110px;">@rate(mine.WinRate)</td>
+                            }
+                        </tr>
+                    </tfoot>
+                </table>
+            </div>
+        </div>
+
+        @if (mineInTop)
+        {
+            <p class="small text-muted mt-2 mb-0">
+                Bạn đang nằm trong Top @top.Count — dòng của bạn đã được tô đậm trong bảng.
+                Dòng ghim ở đáy luôn hiện để bạn khỏi phải cuộn tìm.
+            </p>
+        }
+    }
+
+    <p class="mt-3 mb-0">
+        <a asp-controller="Room" asp-action="Lobby">Về sảnh</a>
+    </p>
+</div>

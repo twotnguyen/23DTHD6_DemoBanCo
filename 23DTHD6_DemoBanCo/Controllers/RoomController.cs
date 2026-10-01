@@ -5,6 +5,8 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.AspNetCore.SignalR;
 using _23DTHD6_DemoBanCo.Data;
 using _23DTHD6_DemoBanCo.Hubs;
+// System.IO (ImplicitUsings) cũng có MatchType, nên phải chỉ rõ enum của dự án.
+using MatchType = _23DTHD6_DemoBanCo.Models.MatchType;
 using _23DTHD6_DemoBanCo.Services;
 using _23DTHD6_DemoBanCo.Models;
 
@@ -40,19 +42,32 @@ namespace _23DTHD6_DemoBanCo.Controllers
             }
         }
 
+        /// <summary>
+        /// Mở phòng theo mã, dùng khi người khác nhập mã phòng hoặc quét mã QR.
+        /// Trả thẳng về phòng chờ vì đó là màn hình duy nhất còn dùng sau khi bỏ
+        /// màn hình "chi tiết phòng" cũ.
+        /// </summary>
         [HttpGet]
-        public async Task<IActionResult> Index()
+        public async Task<IActionResult> Join(string code)
         {
-            int userId = CurrentUserId;
+            if (string.IsNullOrWhiteSpace(code))
+                return RedirectToAction("Lobby");
 
-            var allRooms = await _roomService.GetRoomsWithDetailsAsync();
-            var myRooms = await _roomService.GetRoomsByOwnerAsync(userId);
+            var room = await _roomService.GetByCodeAsync(code);
 
-            ViewBag.MyRooms = myRooms;
-            ViewBag.AllRooms = allRooms;
-            return View();
+            if (room == null)
+            {
+                TempData["ErrorMessage"] = "Không tìm thấy phòng với mã này.";
+                return RedirectToAction("Lobby");
+            }
+
+            return RedirectToAction("Waiting", new { id = room.Id });
         }
 
+        /// <summary>
+        /// Tạo phòng mới. Chủ phòng mặc định ngồi ghế Đỏ (đặc tả 2.3), và được
+        /// đưa thẳng vào màn hình phòng chờ để chọn ghế, sẵn sàng và mời bạn.
+        /// </summary>
         [HttpPost]
         [ValidateAntiForgeryToken]
         public async Task<IActionResult> Create(string? name)
@@ -64,43 +79,13 @@ namespace _23DTHD6_DemoBanCo.Controllers
 
             var room = await _roomService.CreateRoomAsync(userId, name);
 
-            // Phòng mới tạo thì vào thẳng màn hình phòng chờ, có bàn cờ, mã QR
-            // và các nút điều khiển. Details là view cũ, chỉ giữ để tương thích.
             return RedirectToAction("Waiting", new { id = room.Id });
         }
 
-        [HttpGet]
-        public async Task<IActionResult> Details(int id)
-        {
-            int userId = CurrentUserId;
-
-            var room = await _roomService.GetByIdAsync(id);
-            if (room == null)
-                return NotFound("Không tìm thấy phòng này.");
-
-            ViewBag.IsOwner = room.OwnerId == userId;
-            ViewBag.CurrentUserId = userId;
-            return View(room);
-        }
-
-        /// <summary>Mở phòng theo mã, dùng khi người khác nhập mã phòng.</summary>
-        [HttpGet]
-        public async Task<IActionResult> Join(string code)
-        {
-            if (string.IsNullOrWhiteSpace(code))
-                return RedirectToAction("Index");
-
-            var room = await _roomService.GetByCodeAsync(code);
-            if (room == null)
-            {
-                TempData["ErrorMessage"] = "Không tìm thấy phòng với mã này.";
-                return RedirectToAction("Index");
-            }
-
-            // Giữ tương thích với link cũ, nhưng đi tới phòng chờ cho đầy đủ tính năng
-            return RedirectToAction("Waiting", new { id = room.Id });
-        }
-
+        /// <summary>
+        /// Chủ phòng xoá phòng. Phòng còn khán giả cũng bị dọn sạch vì bản ghi phòng
+        /// không còn tái dùng được nữa.
+        /// </summary>
         [HttpPost]
         [ValidateAntiForgeryToken]
         public async Task<IActionResult> Delete(int id)
@@ -108,14 +93,15 @@ namespace _23DTHD6_DemoBanCo.Controllers
             int userId = CurrentUserId;
 
             bool deleted = await _roomService.DeleteRoomAsync(id, userId);
+
             if (!deleted)
             {
                 TempData["ErrorMessage"] = "Chỉ chủ phòng mới có thể xoá phòng này.";
-                return RedirectToAction("Index");
             }
 
-            return RedirectToAction("Index");
+            return RedirectToAction("Lobby");
         }
+
         /// <summary>Sảnh: danh sách phòng công khai, người chơi chọn chế độ rồi tạo phòng.</summary>
         [HttpGet]
         public async Task<IActionResult> Lobby()
@@ -210,16 +196,14 @@ namespace _23DTHD6_DemoBanCo.Controllers
             // Không chặn ở đây vì chủ phòng có thể khoá giữa lúc người chơi đang
             // ở trong phòng và F5 lại trang (đặc tả 4.3: người đang ở trong giữ lại).
             var existing = room.Participants.FirstOrDefault(p => p.UserId == userId);
-            if (existing != null)
+            bool alreadyInRoom = existing != null;
+
+            var blocked = CheckJoinAllowed(room, alreadyInRoom);
+            if (blocked != null)
+                return (room, blocked);
+
+            if (alreadyInRoom)
                 return (room, null);
-
-            // Phòng khoá thì không ai vào được từ bên ngoài, kể cả khi có đúng mã
-            // hay mở thẳng URL. Public và CodeOnly thì vào bình thường.
-            if (room.Visibility == RoomVisibility.Locked)
-                return (room, "Phòng này đang khóa, không ai vào được từ bên ngoài.");
-
-            if (room.Participants.Count >= RoomService.MaxRoomCapacity)
-                return (room, "Phòng đã đủ người, bạn không vào được phòng này nữa.");
 
             // Ghế còn trống thì làm đấu thủ, hết ghế thì làm khán giả
             var role = await _roomService.DecideRoleAsync(room, userId);
@@ -239,6 +223,34 @@ namespace _23DTHD6_DemoBanCo.Controllers
             return (await _roomService.GetByIdAsync(room.Id) ?? room, null);
         }
 
+
+        /// <summary>
+        /// Chặn người vào phòng theo luật của phòng. Trả về thông điệp lỗi tiếng Việt,
+        /// null nghĩa là vào được.
+        ///
+        /// Ba luật ở đây (đặc tả 2.6 / 4.3 / EC-01):
+        ///   - Phòng Closed là vĩnh viễn, không ai vào được nữa kể cả bằng link/mã/QR.
+        ///   - Phòng Locked chặn mọi lượt vào mới từ bên ngoài, nhưng người ĐANG ở trong
+        ///     vẫn được giữ lại xem tiếp.
+        ///   - Phòng Ranked cấm khán giả tuyệt đối, nên người chưa ngồi ghế thì từ chối
+        ///     dù có đúng mã.
+        /// </summary>
+        private static string? CheckJoinAllowed(Room room, bool alreadyInRoom)
+        {
+            if (room.Status == RoomStatus.Closed)
+                return "Phòng thi đấu này đã đóng.";
+
+            if (room.Visibility == RoomVisibility.Locked && !alreadyInRoom)
+                return "Phòng đang khóa, không ai vào được từ bên ngoài.";
+
+            if (room.MatchType == MatchType.Ranked && !alreadyInRoom)
+                return "Ván xếp hạng không cho phép người xem.";
+
+            if (!alreadyInRoom && room.Participants.Count >= RoomService.MaxRoomCapacity)
+                return "Phòng thi đấu đã đầy người, vui lòng chọn phòng khác!";
+
+            return null;
+        }
         /// <summary>Vào phòng bằng mã, chấp nhận cả mã 6 ký tự cũ lẫn mã 8 ký tự mới.</summary>
         [HttpGet]
         public async Task<IActionResult> JoinByCode(string code)
@@ -300,8 +312,8 @@ namespace _23DTHD6_DemoBanCo.Controllers
         }
 
         /// <summary>
-        /// Xin đổi ghế: nếu còn ghế trống thì chuyển thẳng sang ghế đó,
-        /// còn lại báo lại để người chơi biết phải dùng nút đổi ghế.
+        /// Xin đổi bên khi đã đủ hai đấu thủ (đặc tả 2.3). Chỉ ghi nhận đề nghị và mở
+        /// hạn 30 giây; hoán ghế thật sự diễn ra khi đối thủ bấm đồng ý qua hub.
         /// </summary>
         [HttpPost]
         [ValidateAntiForgeryToken]
@@ -309,28 +321,27 @@ namespace _23DTHD6_DemoBanCo.Controllers
         {
             int userId = CurrentUserId;
 
-            var participant = await _roomService.GetParticipantAsync(roomId, userId);
-            if (participant == null)
-            {
-                TempData["ErrorMessage"] = "Bạn không ở trong phòng này.";
-                return RedirectToAction("Lobby");
-            }
-
-            string? other = participant.Side == RoomService.SideRed
-                ? RoomService.SideBlack
-                : RoomService.SideRed;
-
-            bool ok = await _roomService.SwitchSideAsync(roomId, userId, other ?? "");
+            var (ok, error) = await _roomService.RequestSideSwapAsync(roomId, userId);
 
             if (!ok)
             {
-                TempData["ErrorMessage"] = "Ghế bên kia đã có người, bạn không đổi được lúc này.";
+                TempData["ErrorMessage"] = error;
                 return RedirectToAction("Waiting", new { id = roomId });
             }
 
-            await BroadcastRoomStateAsync(roomId);
+            var participant = await _roomService.GetParticipantAsync(roomId, userId);
 
-            TempData["ErrorMessage"] = "Đã đổi ghế của bạn.";
+            await _hubContext.Clients
+                .Group(ChessHub.GetRoomGroupName(roomId))
+                .SendAsync("SideSwapRequested", new
+                {
+                    roomId,
+                    fromUserId = userId,
+                    displayName = participant?.User?.DisplayName ?? "Người chơi",
+                    secondsLeft = RoomService.SideSwapResponseSeconds
+                });
+
+            TempData["ErrorMessage"] = "Đã gửi yêu cầu đổi bên, chờ đối thủ trả lời.";
             return RedirectToAction("Waiting", new { id = roomId });
         }
 
@@ -366,8 +377,9 @@ namespace _23DTHD6_DemoBanCo.Controllers
         }
 
         /// <summary>
-        /// Đuổi một người khỏi phòng. Quyền được kiểm ở tầng dữ liệu, không tin hidden field.
-        /// Người bị đuổi bị ghi vào danh sách chặn nên không vào lại được nữa.
+        /// Đuổi khán giả. Quyền thuộc về CẢ HAI đấu thủ (đặc tả 4.2 - 8B), không chỉ
+        /// chủ phòng. Người bị đuổi bị ghi vào danh sách chặn nên không vào lại được
+        /// phòng này cho tới khi phòng đóng hoàn toàn.
         /// </summary>
         [HttpPost]
         [ValidateAntiForgeryToken]
@@ -375,35 +387,67 @@ namespace _23DTHD6_DemoBanCo.Controllers
         {
             int userId = CurrentUserId;
 
-            var room = await _roomService.GetByIdAsync(roomId);
-            if (room == null)
-            {
-                TempData["ErrorMessage"] = "Không tìm thấy phòng này.";
-                return RedirectToAction("Lobby");
-            }
+            var (ok, error) = await _roomService.KickSpectatorAsync(roomId, userId, targetUserId);
 
-            if (room.OwnerId != userId)
+            if (!ok)
             {
-                TempData["ErrorMessage"] = "Chỉ chủ phòng mới đuổi được người khác.";
+                TempData["ErrorMessage"] = error;
                 return RedirectToAction("Waiting", new { id = roomId });
             }
-
-            var target = room.Participants.FirstOrDefault(p => p.UserId == targetUserId);
-            if (target == null)
-            {
-                TempData["ErrorMessage"] = "Người đó không ở trong phòng.";
-                return RedirectToAction("Waiting", new { id = roomId });
-            }
-
-            await _roomService.BlockUserAsync(roomId, targetUserId, userId);
-            await _roomService.RemoveParticipantAsync(roomId, targetUserId);
 
             // Danh sách người trong phòng đã đổi, phát lại để không ai thấy
             // vị trí của người bị đuổi nữa.
             await BroadcastRoomStateAsync(roomId);
 
+            // Đẩy thẳng người bị đuổi về sảnh kèm thông báo từ chính hub, vì họ
+            // có thể đang mở phòng ở tab khác chứ không phải trang này.
+            // Clients.User nhận khoá kiểu string. Hub ghi connection theo claim
+            // NameIdentifier, cũng là kiểu string, nên phải ép sang string ở đây —
+            // truyền số nguyên sẽ không khớp với bất kỳ kết nối nào và tin bị rơi.
+            await _hubContext.Clients.User(targetUserId.ToString()).SendAsync("KickedFromRoom", new
+            {
+                roomId,
+                message = "Bạn đã bị đuổi khỏi phòng thi đấu."
+            });
+
             TempData["ErrorMessage"] = "Đã đuổi người đó khỏi phòng.";
             return RedirectToAction("Waiting", new { id = roomId });
+        }
+
+
+        /// <summary>
+        /// Màn hình đấu với máy cho một ván đã tạo. Chỉ đấu thủ trong ván được xem,
+        /// và phải là ván AI: nếu mở nhầm ván PvP bằng đường dẫn gõ tay thì vẫn bị chặn,
+        /// vì ở đây không có nhóm realtime nào để rò tin ván người.
+        /// </summary>
+        [HttpGet]
+        public async Task<IActionResult> AiGame(int id)
+        {
+            int userId = CurrentUserId;
+            if (userId == 0)
+                return Challenge();
+
+            var match = await _db.Matches
+                .AsNoTracking()
+                .FirstOrDefaultAsync(m => m.Id == id);
+
+            if (match == null || match.Type != MatchType.Ai)
+                return NotFound("Không tìm thấy ván đấu với máy.");
+
+            if (match.RedUserId != userId && match.BlackUserId != userId)
+                return Forbid();
+
+            // Phe người chơi để view dựng bàn đúng hướng: 0 = Đỏ, 1 = Đen.
+            ViewBag.MatchId = match.Id;
+            ViewBag.Fen = match.Fen;
+            ViewBag.TurnSide = match.TurnSide;
+            ViewBag.PlayerSide = match.RedUserId == userId ? 0 : 1;
+            ViewBag.AiDifficulty = (AiDifficulty)match.AiDifficulty;
+            ViewBag.Status = match.Status;
+            ViewBag.UndoLeft = AiMatchService.MaxUndoPerAiMatch
+                - (match.RedUserId == userId ? match.RedUndoCount : match.BlackUndoCount);
+
+            return View();
         }
 
         /// <summary>Trả về ảnh SVG của mã QR, dùng thẳng làm thuộc tính src.</summary>
@@ -422,10 +466,15 @@ namespace _23DTHD6_DemoBanCo.Controllers
                 return RedirectToAction("Waiting", new { id = roomId });
             }
 
-            // "join" mãi để vào phòng, "share" mãi mời chung
-            string content = string.Equals(scope, "join", StringComparison.OrdinalIgnoreCase)
+            // "join" mãi để vào phòng, "share" mãi mời chung.
+            // Url.Action trả về string? khi không sinh được URL, nên phải chặn null
+            // tại đây — nếu để null lọt xuống GenerateSvg thì QR sẽ rỗng.
+            string? content = string.Equals(scope, "join", StringComparison.OrdinalIgnoreCase)
                 ? Url.Action("JoinByCode", "Room", new { code = room.Code }, Request.Scheme)
                 : Url.Action("Waiting", "Room", new { id = room.Id }, Request.Scheme);
+
+            if (string.IsNullOrEmpty(content))
+                return NotFound("Không sinh được nội dung mã QR.");
 
             string svg = QrCodeService.GenerateSvg(content);
             return Content(svg, "image/svg+xml");

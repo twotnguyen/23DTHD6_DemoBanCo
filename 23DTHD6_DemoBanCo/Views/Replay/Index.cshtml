@@ -1,0 +1,566 @@
+@using System.Text.Json
+@using _23DTHD6_DemoBanCo.Models
+@*
+    =============================================================================
+    MÀN HÌNH XEM LẠI VÁN ĐẤU
+    =============================================================================
+
+    HỢP ĐỒNG VỚI CONTROLLER (ReplayController.Index(int id))
+    -------------------------------------------------------
+    Controller KHÔNG truyền Model mà đặt tất cả dữ liệu vào ViewBag:
+
+        matchId      int            — id ván đấu (dùng cho tên file .pgn)
+        fenList      List<string>   — fenList[0] = THẾ CỜ KHỞI ĐẦU,
+                                      fenList[i] = thế cờ SAU nước đi thứ i
+                                      (tức fenList[i] = moves[i-1].FenAfter)
+        moves        List<MatchMove>— MoveNumber, Side (0=đỏ, 1=đen), SanMove,
+                                      FromRow/FromCol/ToRow/ToCol, FenAfter
+        initialFen   string         — FEN thế cờ khởi đầu (dự phòng khi
+                                      fenList rỗng)
+        redName      string         — tên hiển thị phe đỏ
+        blackName    string         — tên hiển thị phe đen
+        resultText   string         — kết quả dạng chữ, ví dụ "Đỏ thắng"
+        pgn          string         — nội dung PGN (rỗng nếu không được xem)
+        title        string         — ví dụ "Xem lại ván #123"
+
+    Controller KHÔNG cần (và không nên) kiểm tra quyền xem lại ở tầng view —
+    MatchHistoryService.GetMovesAsync / ToPgnAsync đã tự chặn người ngoài ván
+    bằng cách trả về danh sách rỗng. Vì vậy view phải chịu được cả trường hợp
+    moves rỗng và fenList rỗng mà không vỡ trang.
+
+    CÁCH DỰNG BÀN
+    -------------
+    1. index = 0        -> vẽ fenList[0] (thế cờ khởi đầu), không tô nước nào.
+    2. index = i (i>=1) -> vẽ fenList[i], tô setLastMove(moves[i-1]).
+    Board được dựng bằng module dùng chung wwwroot/js/chess-board.js
+    (window.ChessBoardView), chế độ CHỈ XEM: canMove = false, legalMoves rỗng.
+    =============================================================================
+*@
+@{
+    ViewData["Title"] = (ViewBag.title as string) ?? "Xem lại ván đấu";
+
+    var fenList = (ViewBag.fenList as IEnumerable<string>)?.ToList() ?? new List<string>();
+    var moves = (ViewBag.moves as IEnumerable<MatchMove>)?.ToList() ?? new List<MatchMove>();
+    var initialFen = (ViewBag.initialFen as string) ?? "";
+    var redName = (ViewBag.redName as string) ?? "Đỏ";
+    var blackName = (ViewBag.blackName as string) ?? "Đen";
+    var resultText = (ViewBag.resultText as string) ?? "Chưa rõ kết quả";
+    var pgn = (ViewBag.pgn as string) ?? "";
+    var title = (ViewBag.title as string) ?? "Xem lại ván đấu";
+    var matchId = (int?)(ViewBag.matchId) ?? 0;
+
+    // Server có thể chỉ truyền initialFen mà fenList rỗng — ghép lại thành
+    // mảng một phần tử để bước 0 của thanh tua vẫn có thế cờ vẽ được.
+    var fens = fenList.Count > 0 ? fenList : (string.IsNullOrEmpty(initialFen) ? new List<string>() : new List<string> { initialFen });
+
+    // Chỉ nhét vào JSON đúng những field view cần dùng. Không serialize thẳng
+    // entity MatchMove: nó có navigation Match trỏ ngược lại, dễ sinh vòng
+    // tham chiếu khiến Json.Serialize ném lỗi, và payload thừa là tải vô ích.
+    var movesJson = moves.Select(m => new
+    {
+        n = m.MoveNumber,
+        s = m.Side,
+        san = m.SanMove,
+        fr = m.FromRow,
+        fc = m.FromCol,
+        tr = m.ToRow,
+        tc = m.ToCol
+    }).ToList();
+
+    var replayData = new
+    {
+        matchId = matchId,
+        fens = fens,
+        moves = movesJson,
+        pgn = pgn
+    };
+}
+
+<div id="replayPage">
+    @* Mọi quy tắc bên dưới đều bắt đầu bằng #replayPage: bàn cờ module dựng
+       bằng style nội tuyến ở file khác, không muốn rò style của trang này ra
+       ngoài. *@
+    <style>
+        #replayPage { color: #222; }
+        #replayPage .rp-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; flex-wrap: wrap; margin-bottom: 16px; }
+        #replayPage .rp-title { font-size: 22px; margin: 0 0 4px; font-weight: 700; }
+        #replayPage .rp-sub { font-size: 14px; color: #555; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+        #replayPage .rp-sub-sep { color: #999; }
+        #replayPage .rp-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+        #replayPage .rp-empty { background: #fff; border: 1px solid #ddd; border-radius: 10px; padding: 24px; color: #666; font-size: 14px; }
+
+        /* ---- Chấm màu phe: đỏ = viền đỏ, đen = viền xanh đen, khớp với
+               DT-21 của chess-board.js để người mù màu vẫn phân biệt được. ---- */
+        #replayPage .rp-sub-dot,
+        #replayPage .rp-side-dot,
+        #replayPage .rp-move-dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; flex: 0 0 auto; }
+        #replayPage .rp-sub-dot.red,
+        #replayPage .rp-side-dot.red,
+        #replayPage .rp-move-dot.red { background: #d32f2f; box-shadow: 0 0 0 2px #fff, 0 0 0 3px #d32f2f; }
+        #replayPage .rp-sub-dot.black,
+        #replayPage .rp-side-dot.black,
+        #replayPage .rp-move-dot.black { background: #263238; box-shadow: 0 0 0 2px #fff, 0 0 0 3px #1565c0; }
+
+        /* ---- Nút ---- */
+        #replayPage .rp-btn { border: none; border-radius: 6px; background: #1a73e8; color: #fff; cursor: pointer; font-size: 14px; font-weight: 600; padding: 8px 14px; font-family: inherit; }
+        #replayPage .rp-btn:hover:not(:disabled) { background: #1558b0; }
+        #replayPage .rp-btn:disabled { opacity: .45; cursor: not-allowed; }
+        #replayPage .rp-btn:focus-visible { outline: 2px solid #1558b0; outline-offset: 2px; }
+        #replayPage .rp-btn-ghost { background: #fff; color: #333; border: 1px solid #ccc; }
+        #replayPage .rp-btn-ghost:hover:not(:disabled) { background: #f0f0f0; }
+        #replayPage .rp-btn-icon { font-size: 15px; padding: 8px 13px; line-height: 1; }
+        #replayPage .rp-btn-play { min-width: 92px; }
+
+        /* ---- Bố cục: bàn cờ + danh sách nước đi ---- */
+        #replayPage .rp-layout { display: flex; gap: 20px; align-items: flex-start; flex-wrap: wrap; }
+        #replayPage .rp-board-col { flex: 1 1 660px; min-width: 300px; background: #fff; border: 1px solid #ddd; border-radius: 10px; padding: 16px; }
+        #replayPage .rp-side-col { flex: 0 1 320px; min-width: 260px; }
+
+        #replayPage .rp-player { display: flex; align-items: center; gap: 7px; font-weight: 600; font-size: 15px; padding: 4px 2px; }
+        #replayPage .rp-player-black { margin-bottom: 6px; }
+        #replayPage .rp-player-red { margin-top: 6px; }
+
+        /* ---- Thanh điều khiển tua nước đi ---- */
+        #replayPage .rp-controls { margin-top: 14px; padding-top: 12px; border-top: 1px solid #eee; }
+        #replayPage .rp-transport { display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; }
+        #replayPage .rp-scrub { width: 100%; margin: 14px 0 4px; accent-color: #1a73e8; cursor: pointer; }
+        #replayPage .rp-counter { text-align: center; font-size: 14px; color: #555; }
+        #replayPage .rp-counter strong { color: #1a73e8; font-size: 16px; }
+
+        /* ---- SAN của nước đang xem ---- */
+        #replayPage .rp-now { display: flex; align-items: center; justify-content: center; gap: 10px; flex-wrap: wrap; margin-top: 10px; padding: 10px; background: #f6f7f9; border-radius: 8px; }
+        #replayPage .rp-now-label { font-size: 12px; color: #888; text-transform: uppercase; letter-spacing: .04em; }
+        #replayPage .rp-now-san { font-size: 22px; font-weight: 700; color: #1a73e8; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+        #replayPage .rp-now-side { display: inline-flex; align-items: center; gap: 5px; font-size: 14px; color: #555; }
+        #replayPage .rp-note { font-size: 13px; color: #777; margin: 12px 0 0; text-align: center; }
+        #replayPage .rp-note kbd { background: #eee; border: 1px solid #ccc; border-radius: 3px; padding: 0 4px; font-size: 12px; }
+
+        /* ---- Danh sách nước đi ---- */
+        #replayPage .rp-panel { background: #fff; border: 1px solid #ddd; border-radius: 10px; padding: 14px; }
+        #replayPage .rp-panel-title { font-size: 15px; margin: 0 0 10px; font-weight: 700; }
+        #replayPage .rp-move-list { max-height: 560px; overflow-y: auto; display: flex; flex-direction: column; gap: 2px; }
+        #replayPage .rp-move { display: flex; align-items: center; gap: 8px; width: 100%; text-align: left; background: transparent; border: 1px solid transparent; border-radius: 6px; padding: 6px 8px; cursor: pointer; font: inherit; font-size: 14px; color: #222; }
+        #replayPage .rp-move:hover { background: #f2f5fb; }
+        #replayPage .rp-move:focus-visible { outline: 2px solid #1558b0; outline-offset: -2px; }
+        #replayPage .rp-move.active { background: #e8f0fe; border-color: #1a73e8; font-weight: 600; }
+        #replayPage .rp-move-no { flex: 0 0 30px; color: #888; font-size: 12px; font-variant-numeric: tabular-nums; }
+        #replayPage .rp-move-san { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+        /* ==================================================================
+           BÀN CỜ — nguyên văn bộ quy tắc .xb-* của Views/Home/Index.cshtml.
+           chess-board.js chỉ gắn class, còn vị trí/kích thước do ở đây quy
+           định; thiếu khối này thì quân dồn về 0,0 và không nhìn ra bàn cờ.
+           ================================================================== */
+        #replayPage #boardRoot { position: relative; width: 100%; max-width: 660px; margin: 0 auto; user-select: none; -webkit-user-select: none; touch-action: none; }
+        #replayPage #boardRoot img.board-image { display: block; width: 100%; height: auto; pointer-events: none; -webkit-user-drag: none; }
+        #replayPage .xb-layer { position: absolute; inset: 0; }
+        #replayPage .xb-piece { position: absolute; width: 7%; height: auto; transform: translate(-50%, -50%); z-index: 10; transition: left .18s ease, top .18s ease, transform .18s ease; pointer-events: auto; -webkit-user-drag: none; }
+        #replayPage .xb-piece.xb-noanim { transition: none; }
+        #replayPage .xb-piece.xb-dragging { transition: none; z-index: 40; cursor: grabbing; }
+        #replayPage .xb-piece.xb-side-red { border-radius: 50%; box-shadow: 0 0 0 2px #d32f2f, 0 1px 3px rgba(0,0,0,.35); }
+        #replayPage .xb-piece.xb-side-black { border-radius: 50%; box-shadow: 0 0 0 2px #1565c0, 0 1px 3px rgba(0,0,0,.35); }
+        #replayPage .xb-marker { position: absolute; transform: translate(-50%, -50%); pointer-events: none; z-index: 5; }
+        #replayPage .xb-marker-target { width: 4.2%; padding-bottom: 4.2%; height: 0; border-radius: 50%; background: rgba(25,135,84,.45); }
+        #replayPage .xb-marker-capture { width: 8.4%; padding-bottom: 8.4%; height: 0; border-radius: 50%; border: 2px solid #d32f2f; box-sizing: border-box; animation: xb-blink 1s ease-in-out infinite; }
+        #replayPage .xb-marker-last { width: 8.4%; padding-bottom: 8.4%; height: 0; border-radius: 4px; border: 2px solid #ff8f00; box-sizing: border-box; }
+        #replayPage .xb-marker-check { width: 8.8%; padding-bottom: 8.8%; height: 0; border-radius: 50%; border: 3px solid #d32f2f; box-sizing: border-box; animation: xb-shake .5s ease-in-out infinite; }
+        #replayPage .xb-selection { position: absolute; width: 8.4%; padding-bottom: 8.4%; height: 0; transform: translate(-50%, -50%); border-radius: 50%; border: 2px dashed #1a73e8; box-sizing: border-box; pointer-events: none; z-index: 20; }
+        #replayPage .xb-status { text-align: center; font-size: 14px; color: #555; margin-top: 10px; min-height: 18px; }
+        @@keyframes xb-blink { 0%,100% { opacity: .35; } 50% { opacity: 1; } }
+        @@keyframes xb-shake {
+            0%,100% { transform: translate(-50%,-50%) scale(1); }
+            25% { transform: translate(-50%,-50%) scale(1.06); }
+            75% { transform: translate(-50%,-50%) scale(.98); }
+        }
+
+        /* Các dòng khai báo keyframes và media query ở dưới phải nhân đôi ký tự thạch
+           bắt đầu dòng vì nằm trong khối style của Razor: một ký tự đơn sẽ bị đọc
+           nhầm thành chuyển sang C# và làm hỏng cả trang. */
+        @@media (max-width: 576px) {
+            #replayPage .rp-btn-icon { padding: 8px 10px; }
+            #replayPage .rp-move-list { max-height: 320px; }
+        }
+    </style>
+
+
+    @if (fens.Count == 0)
+    {
+        @* Không có thế cờ khởi đầu thì không dựng được bàn cờ: báo rõ thay vì
+           để trắng trơn một khung rỗng. *@
+        <div class="rp-empty">@title — không có dữ liệu nước đi để xem lại.</div>
+    }
+    else
+    {
+        <div class="rp-head">
+            <div class="rp-head-info">
+                <h1 class="rp-title">@title</h1>
+                <div class="rp-sub">
+                    <span class="rp-sub-dot red"></span>@redName
+                    <span class="rp-sub-sep">vs</span>
+                    <span class="rp-sub-dot black"></span>@blackName
+                    <span class="rp-sub-sep">&middot;</span>
+                    <strong>@resultText</strong>
+                </div>
+            </div>
+            <div class="rp-actions">
+                <button type="button" id="rpCopyFen" class="rp-btn rp-btn-ghost" title="Sao chép thế cờ hiện tại (FEN)">Sao chép FEN</button>
+                <button type="button" id="rpDownloadPgn" class="rp-btn rp-btn-ghost"
+                        title="@(string.IsNullOrEmpty(pgn) ? "Bạn không có quyền tải PGN của ván này" : "Tải ván đấu dạng PGN")"
+                        @(string.IsNullOrEmpty(pgn) ? "disabled" : "")>
+                    @(string.IsNullOrEmpty(pgn) ? "Không có PGN" : "Tải PGN")
+                </button>
+            </div>
+        </div>
+
+        <div class="rp-layout">
+
+            @* ==================== CỘT BÀN CỜ ==================== *@
+            <div class="rp-board-col">
+
+                <div class="rp-player rp-player-black"><span class="rp-side-dot black"></span>@blackName</div>
+
+                @* Container RIÊNG: ChessBoardView.init() xoá sạch innerHTML nên
+                   không được chứa bất cứ thứ gì khác bên trong. *@
+                <div id="boardRoot"></div>
+
+                <div class="rp-player rp-player-red"><span class="rp-side-dot red"></span>@redName</div>
+
+                <div class="rp-controls">
+                    <div class="rp-transport">
+                        <button type="button" id="rpFirst" class="rp-btn rp-btn-icon" title="Về thế cờ khởi đầu" aria-label="Về thế cờ khởi đầu">&#9198;</button>
+                        <button type="button" id="rpPrev" class="rp-btn rp-btn-icon" title="Nước trước" aria-label="Lùi một nước">&#9664;</button>
+                        <button type="button" id="rpPlay" class="rp-btn rp-btn-play" title="Phát tự động" aria-label="Phát tự động">&#9654; Phát</button>
+                        <button type="button" id="rpNext" class="rp-btn rp-btn-icon" title="Nước sau" aria-label="Tiến một nước">&#9654;</button>
+                        <button type="button" id="rpLast" class="rp-btn rp-btn-icon" title="Về nước cuối" aria-label="Về nước cuối cùng">&#9197;</button>
+                    </div>
+
+                    @* Thanh tua: giá trị là "số nước đã đi", 0 = thế cờ khởi đầu. *@
+                    <input type="range" id="rpScrub" class="rp-scrub" min="0" max="0" step="1" value="0"
+                           aria-label="Vị trí nước đi" />
+
+                    <div class="rp-counter">Nước <strong id="rpCurrent">0</strong> / <span id="rpTotal">0</span></div>
+                </div>
+
+                <div class="rp-now">
+                    <span class="rp-now-label">Nước hiện tại</span>
+                    <span class="rp-now-san" id="rpCurrentSan">&mdash;</span>
+                    <span class="rp-now-side" id="rpCurrentSide"></span>
+                </div>
+
+                @if (moves.Count == 0)
+                {
+                    <p class="rp-note">Ván này chưa có nước đi nào. Bạn đang xem thế cờ khởi đầu.</p>
+                }
+                else
+                {
+                    <p class="rp-note">Dùng ph&iacute;m mũi tên để chuyển nước, ph&iacute;m c&aacute;ch để tua nhanh. Ph&iacute;m <kbd>&larr;</kbd> <kbd>&rarr;</kbd> l&ugrave;i một nước, <kbd>Space</kbd> ph&aacute;t / dừng.</p>
+                }
+            </div>
+
+            @* ==================== CỘT DANH SÁCH NƯỚC ĐI ==================== *@
+            <div class="rp-side-col">
+                <div class="rp-panel">
+                    <h2 class="rp-panel-title">Các nước đi</h2>
+                    <div class="rp-move-list" id="rpMoveList" role="group" aria-label="Danh sách nước đi"></div>
+                </div>
+            </div>
+
+        </div>
+    }
+</div>
+
+@section Scripts {
+    @if (fens.Count > 0)
+    {
+        <script src="/js/chess-board.js"></script>
+        <script>
+            window.REPLAY_DATA = @Html.Raw(Json.Serialize(replayData));
+        </script>
+        <script>
+            (function () {
+                'use strict';
+
+                var STEP_MS = 700;   // nhịp phát tự động: 1 nước / 700ms
+
+                var data = window.REPLAY_DATA || { matchId: 0, fens: [], moves: [], pgn: '' };
+                var fens = Array.isArray(data.fens) ? data.fens : [];
+                var moves = Array.isArray(data.moves) ? data.moves : [];
+
+                function byId(id) { return document.getElementById(id); }
+
+                var boardRoot = byId('boardRoot');
+                var listEl = byId('rpMoveList');
+                var scrubEl = byId('rpScrub');
+                var curEl = byId('rpCurrent');
+                var totalEl = byId('rpTotal');
+                var sanEl = byId('rpCurrentSan');
+                var sideEl = byId('rpCurrentSide');
+                var btnFirst = byId('rpFirst');
+                var btnPrev = byId('rpPrev');
+                var btnPlay = byId('rpPlay');
+                var btnNext = byId('rpNext');
+                var btnLast = byId('rpLast');
+                var btnCopyFen = byId('rpCopyFen');
+                var btnPgn = byId('rpDownloadPgn');
+
+                if (!boardRoot || !listEl || !window.ChessBoardView) return;
+
+                /* ---------- escapeHtml: mọi chuỗi do server đưa vào đều phải
+                       thoát trước khi chèn bằng innerHTML. ---------- */
+                function escapeHtml(value) {
+                    return String(value == null ? '' : value).replace(/[&<>"']/g, function (c) {
+                        return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+                    });
+                }
+
+                /* ================== BÀN CỜ ================== */
+                var board = ChessBoardView.init(boardRoot, '/images/');
+
+                /* Đây là XEM LẠI, không phải ván đang chơi: cấm kéo-thả và
+                   không có nước đi hợp lệ nào để tô. */
+                board.canMove = false;
+                board.onMove = null;
+                board.setLegalMoves([]);
+
+                /* ================== TRẠNG THÁI ================== */
+                var total = moves.length;
+                var index = 0;      // 0 = thế cờ khởi đầu, i = sau nước thứ i
+                var timer = null;
+                var rows = [];
+
+                function fenAt(i) {
+                    var k = Math.min(i, fens.length - 1);
+                    return k >= 0 ? (fens[k] || '') : '';
+                }
+
+                /* ================== DANH SÁCH NƯỚC ĐI ================== */
+                function makeRow(targetIndex, label, san, side) {
+                    var btn = document.createElement('button');
+                    btn.type = 'button';
+                    btn.className = 'rp-move';
+
+                    var dot = side === 0 ? 'red' : (side === 1 ? 'black' : '');
+                    btn.innerHTML =
+                        '<span class="rp-move-no">' + escapeHtml(label) + '</span>' +
+                        (dot ? '<span class="rp-move-dot ' + dot + '"></span>' : '') +
+                        '<span class="rp-move-san">' + escapeHtml(san) + '</span>';
+
+                    btn.addEventListener('click', function () {
+                        goTo(targetIndex);
+                    });
+
+                    listEl.appendChild(btn);
+                    return btn;
+                }
+
+                /* Hàng đầu tiên không phải nước đi mà là thế cờ khởi đầu, nên
+                   không có chấm phe — người xem vẫn nhảy lại được ván đầu. */
+                makeRow(0, 0, 'Thế cờ khởi đầu', null);
+                for (var i = 0; i < moves.length; i++) {
+                    makeRow(i + 1, moves[i].n, moves[i].san, moves[i].s);
+                }
+                rows = Array.prototype.slice.call(listEl.children);
+
+                /* Đưa nước đang xem vào giữa khung, không dùng scrollIntoView vì
+                   nó kéo cả trang cha theo. */
+                function scrollActive() {
+                    var active = rows[index];
+                    if (!active) return;
+                    var target = active.offsetTop - (listEl.clientHeight / 2) + (active.offsetHeight / 2);
+                    listEl.scrollTop = target > 0 ? target : 0;
+                }
+
+                /* ================== VẼ THEO VỊ TRÍ ================== */
+                function render() {
+                    var fen = fenAt(index);
+                    var pieces = board.parseFen(fen);
+
+                    /* FEN hỏng thì để nguyên bàn cũ, không xoá sạch quân. */
+                    if (pieces.length) board.setPieces(pieces);
+
+                    board.clearSelection();
+                    board.clearHighlights();
+
+                    if (index > 0 && index <= moves.length) {
+                        var m = moves[index - 1];
+                        board.setLastMove(
+                            { row: m.fr, col: m.fc },
+                            { row: m.tr, col: m.tc }
+                        );
+                    }
+
+                    /* --- thanh đếm --- */
+                    curEl.textContent = String(index);
+                    totalEl.textContent = String(total);
+                    if (scrubEl.value !== String(index)) scrubEl.value = String(index);
+
+                    /* --- SAN của nước đang xem --- */
+                    if (index > 0 && index <= moves.length) {
+                        var cur = moves[index - 1];
+                        sanEl.textContent = cur.san || '(không rõ)';
+                        sideEl.innerHTML = cur.s === 0
+                            ? '<span class="rp-side-dot red"></span>Đỏ'
+                            : '<span class="rp-side-dot black"></span>Đen';
+                    } else {
+                        sanEl.textContent = '—';
+                        sideEl.innerHTML = '';
+                    }
+
+                    /* --- trạng thái nút --- */
+                    btnFirst.disabled = index <= 0;
+                    btnPrev.disabled = index <= 0;
+                    btnNext.disabled = index >= total;
+                    btnLast.disabled = index >= total;
+
+                    /* --- làm nổi nước đang xem trong danh sách --- */
+                    for (var r = 0; r < rows.length; r++) {
+                        var on = r === index;
+                        rows[r].classList.toggle('active', on);
+                        if (on) rows[r].setAttribute('aria-current', 'true');
+                        else rows[r].removeAttribute('aria-current');
+                    }
+                    scrollActive();
+                }
+
+                function goTo(target) {
+                    var next = Math.max(0, Math.min(total, target));
+                    if (next === index) return;
+                    index = next;
+                    render();
+                }
+
+                /* ================== PHÁT TỰ ĐỘNG ================== */
+                function setPlayLabel(playing) {
+                    btnPlay.innerHTML = playing ? '&#10074;&#10074; Dừng' : '&#9654; Phát';
+                    btnPlay.setAttribute('aria-label', playing ? 'Tạm dừng phát' : 'Phát tự động');
+                    btnPlay.title = playing ? 'Tạm dừng' : 'Phát tự động';
+                }
+
+                function stop() {
+                    if (timer) {
+                        clearInterval(timer);
+                        timer = null;
+                    }
+                    setPlayLabel(false);
+                }
+
+                function start() {
+                    if (total === 0) return;
+
+                    /* Bấm Phát khi đang ở nước cuối thì tua lại đầu ván,
+                       nếu không sẽ bấm một cái là đứng yên không nhúc nhích. */
+                    if (index >= total) {
+                        index = 0;
+                        render();
+                    }
+
+                    setPlayLabel(true);
+                    timer = setInterval(function () {
+                        if (index >= total) {
+                            stop();
+                            return;
+                        }
+                        index = index + 1;
+                        render();
+                    }, STEP_MS);
+                }
+
+                function togglePlay() {
+                    if (timer) stop();
+                    else start();
+                }
+
+                /* ================== GIAO TIẾP NÚT ================== */
+                btnFirst.addEventListener('click', function () { goTo(0); });
+                btnPrev.addEventListener('click', function () { goTo(index - 1); });
+                btnNext.addEventListener('click', function () { goTo(index + 1); });
+                btnLast.addEventListener('click', function () { goTo(total); });
+                btnPlay.addEventListener('click', togglePlay);
+
+                scrubEl.addEventListener('input', function () {
+                    var v = parseInt(scrubEl.value, 10);
+                    goTo(isNaN(v) ? 0 : v);
+                });
+
+                /* Phím tắt: chỉ khi người dùng không đang gõ/đang bấm nút,
+                   không giành phím của chính các control kia. */
+                document.addEventListener('keydown', function (e) {
+                    if (e.ctrlKey || e.altKey || e.metaKey) return;
+                    var tag = e.target && e.target.tagName;
+                    if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'BUTTON' || tag === 'SELECT') return;
+
+                    if (e.key === 'ArrowRight') { goTo(index + 1); e.preventDefault(); }
+                    else if (e.key === 'ArrowLeft') { goTo(index - 1); e.preventDefault(); }
+                    else if (e.key === ' ' || e.key === 'Spacebar') { togglePlay(); e.preventDefault(); }
+                });
+
+                /* ================== SAO CHÉP FEN (13B) ==================
+                   navigator.clipboard chỉ chạy ở ngữ cảnh an toàn (https/localhost),
+                   nên phải có đường lùi bằng textarea ẩn + execCommand. */
+                btnCopyFen.addEventListener('click', function () {
+                    var fen = fenAt(index);
+                    if (!fen) return;
+
+                    var button = this;
+                    var original = button.textContent;
+
+                    function done(ok) {
+                        button.textContent = ok ? 'Đã sao chép' : 'Không sao chép được';
+                        setTimeout(function () { button.textContent = original; }, 1500);
+                    }
+
+                    function fallback() {
+                        var ta = document.createElement('textarea');
+                        ta.value = fen;
+                        ta.setAttribute('readonly', '');
+                        ta.style.position = 'fixed';
+                        ta.style.top = '-1000px';
+                        ta.style.opacity = '0';
+                        document.body.appendChild(ta);
+                        ta.select();
+
+                        var ok = false;
+                        try { ok = document.execCommand('copy'); } catch (err) { ok = false; }
+
+                        document.body.removeChild(ta);
+                        done(ok);
+                    }
+
+                    if (navigator.clipboard && navigator.clipboard.writeText) {
+                        navigator.clipboard.writeText(fen).then(function () { done(true); }, fallback);
+                    } else {
+                        fallback();
+                    }
+                });
+
+                /* ================== TẢI PGN (13B) ================== */
+                if (btnPgn && !btnPgn.disabled) {
+                    btnPgn.addEventListener('click', function () {
+                        var text = typeof data.pgn === 'string' ? data.pgn : '';
+                        if (!text) return;
+
+                        var blob = new Blob([text], { type: 'application/x-chess-pgn;charset=utf-8' });
+                        var url = URL.createObjectURL(blob);
+
+                        var a = document.createElement('a');
+                        a.href = url;
+                        a.download = 'van-' + data.matchId + '.pgn';
+                        document.body.appendChild(a);
+                        a.click();
+                        document.body.removeChild(a);
+
+                        /* Nhả URL sau một nhịp để trình duyệt kịp bắt đầu tải. */
+                        setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
+                    });
+                }
+
+                /* ================== KHỞI TẠO ================== */
+                scrubEl.max = String(total);
+                scrubEl.disabled = total === 0;
+                btnPlay.disabled = total === 0;
+
+                render();
+            })();
+        </script>
+    }
+}

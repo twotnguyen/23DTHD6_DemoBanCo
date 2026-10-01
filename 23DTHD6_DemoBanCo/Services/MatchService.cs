@@ -34,6 +34,26 @@ namespace _23DTHD6_DemoBanCo.Services
         // Số lần lặp thế cờ do GameEvaluator.RepetitionLimit quyết định, không khai lại ở đây
         // để hai hằng số không trôi khỏi nhau.
 
+        /// <summary>Giây đếm ngược 3-2-1 trước khi ván được tính là bắt đầu (đặc tả 2.3).</summary>
+        public const int StartCountdownSeconds = 3;
+
+        /// <summary>Thời hạn chờ đối thủ trả lời đề nghị đi lại (đặc tả 3.2).</summary>
+        public const int UndoResponseSeconds = 30;
+
+        /// <summary>Thời hạn chờ đối thủ trả lời đề nghị hoà (đặc tả 3.3).</summary>
+        public const int DrawResponseSeconds = 30;
+
+        /// <summary>Thời gian phòng giữ trạng thái FINISHED sau khi ván xong (đặc tả R14).</summary>
+        public const int RematchWindowSeconds = 600;
+
+        /// <summary>Thời gian cố định của một ván xếp hạng: 10 phút Rapid mỗi bên (EC-01).</summary>
+        public const int RankedTimeLimitSeconds = 600;
+
+        /// <summary>Trạng thái đề nghị: chưa ai đề nghị / đang chờ / đã xong.</summary>
+        public const int OfferStateNone = 0;
+        public const int OfferStatePending = 1;
+        public const int OfferStateDone = 2;
+
         /// <summary>
         /// Kết quả một lệnh nước đi. Error dạng chuỗi tiếng Việt để client hiện thẳng lên UI.
         /// </summary>
@@ -61,14 +81,21 @@ namespace _23DTHD6_DemoBanCo.Services
         /// Tạo ván mới cho phòng. Bên đỏ đi trước (TurnSide = 0).
         /// timeLimitSeconds = 0 nghĩa là không giới hạn thời gian, đồng hồ giữ nguyên 0.
         /// </summary>
+        /// <param name="countdownSeconds">
+        /// Số giây đếm ngược 3-2-1 trước khi ván nhận nước đi. Truyền 0 cho ván với máy
+        /// và ván đã vào thẳng, vì hai trường hợp đó người chơi đã sẵn sàng ngồi bàn.
+        /// </param>
         public async Task<Match> StartMatchAsync(
             int roomId,
             int redUserId,
             int blackUserId,
             MatchType type,
             int timeLimitSeconds,
-            AiDifficulty aiDifficulty)
+            AiDifficulty aiDifficulty,
+            int countdownSeconds = StartCountdownSeconds)
         {
+            DateTime now = DateTime.UtcNow;
+
             var match = new Match
             {
                 RoomId = roomId,
@@ -83,15 +110,41 @@ namespace _23DTHD6_DemoBanCo.Services
                 BlackTimeLeftSeconds = timeLimitSeconds,
                 Fen = GameEvaluator.InitialFen,
                 AiDifficulty = type == MatchType.Ai ? (int)aiDifficulty : -1,
-                StartedAt = DateTime.UtcNow,
-                LastMoveAt = DateTime.UtcNow
+                StartedAt = now,
+                LastMoveAt = now,
+
+                // LastMoveAt được dịch tới sau đồng hồ đếm để thời gian bên đỏ chỉ bắt đầu
+                // trừ khi ván thật sự mở, không bị mất 3 giây ngay khi ván vừa tạo.
+                CountdownEndsAt = countdownSeconds > 0 ? now.AddSeconds(countdownSeconds) : null
             };
+
+            if (match.CountdownEndsAt.HasValue)
+            {
+                match.LastMoveAt = match.CountdownEndsAt.Value;
+            }
 
             _db.Matches.Add(match);
             await _db.SaveChangesAsync();
 
             return match;
         }
+
+        /// <summary>
+        /// Ván còn đang đếm ngược 3-2-1 chưa. Mọi luật phụ thuộc thời gian (đồng hồ,
+        /// chống treo) và mọi lệnh của người chơi đều bị chặn cho tới lúc đếm xong, để
+        /// không ai đi nước đầu tiên trong lúc khán giả còn nhìn thấy đồng hồ đếm.
+        /// </summary>
+        public static bool IsCountingDown(Match match)
+            => match.CountdownEndsAt.HasValue
+            && match.CountdownEndsAt.Value > DateTime.UtcNow;
+
+        /// <summary>
+        /// Thông điệp chung cho mọi lệnh bị chặn vì ván còn đếm ngược. Đặt ở đây để
+        /// mọi cổng vào (nước đi, đi lại, hoà) nói cùng một câu với người chơi.
+        /// </summary>
+        private const string CountingDownMessage =
+            "Ván đấu chưa bắt đầu, hãy đợi đồng hồ đếm ngược kết thúc.";
+
 
         // =========================================
         // Gửi nước đi
@@ -117,6 +170,11 @@ namespace _23DTHD6_DemoBanCo.Services
             if (match.Status != StatusPlaying)
             {
                 return MoveResult.Fail("Ván đấu không còn hoạt động.");
+            }
+
+            if (IsCountingDown(match))
+            {
+                return MoveResult.Fail(CountingDownMessage);
             }
 
             // Quyền lượt đi lấy từ UserId trong cookie, không tin client tự khai.
@@ -281,11 +339,14 @@ namespace _23DTHD6_DemoBanCo.Services
         /// <summary>
         /// Xin đi lại 1 cặp nước (2 ply). Ván xếp hạng không cho đi lại.
         /// Lượt đã dùng chỉ trừ khi đề nghị được chấp nhận.
+        ///
+        /// Hàm này KHÔNG lùi nước: nó chỉ ghi nhận đề nghị và mở hạn 30 giây cho đối thủ.
+        /// Việc lùi nằm ở <see cref="AcceptUndoAsync"/>, nên khi đối thủ từ chối hoặc hết
+        /// hạn thì lượt của người xin vẫn nguyên, đúng đặc tả 3.2.
         /// </summary>
         public async Task<MoveResult> RequestUndoAsync(int matchId, int userId)
         {
             var match = await _db.Matches
-                .Include(m => m.Moves)
                 .FirstOrDefaultAsync(m => m.Id == matchId);
 
             if (match == null)
@@ -295,6 +356,14 @@ namespace _23DTHD6_DemoBanCo.Services
             if (match.Type == MatchType.Ranked)
             {
                 return MoveResult.Fail("Ván xếp hạng không cho phép đi lại.");
+            }
+            if (match.Status != StatusPlaying)
+            {
+                return MoveResult.Fail("Ván đấu không còn hoạt động.");
+            }
+            if (IsCountingDown(match))
+            {
+                return MoveResult.Fail(CountingDownMessage);
             }
 
             int? side = ResolveSide(match, userId);
@@ -312,28 +381,81 @@ namespace _23DTHD6_DemoBanCo.Services
                     $"Bạn đã sử dụng hết {MaxUndoPerSide} lượt xin đi lại trong ván này.");
             }
 
-            var lastMove = match.Moves
-                .OrderBy(m => m.Id)
-                .LastOrDefault();
+            int moveCount = await _db.MatchMoves.CountAsync(m => m.MatchId == matchId);
 
             // Cần có ít nhất 2 nước thì mới lùi được một cặp: nước của bên xin và nước trả lời.
-            if (lastMove == null || match.Moves.Count < 2)
+            if (moveCount < 2)
             {
                 return MoveResult.Fail("Chưa có đủ nước đi để đi lại.");
             }
+
+            if (match.UndoRequestedBy == userId)
+            {
+                return MoveResult.Fail("Bạn đang chờ đối thủ trả lời yêu cầu đi lại.");
+            }
+
+            match.UndoRequestedBy = userId;
+            match.UndoRequestExpiresAt = DateTime.UtcNow.AddSeconds(UndoResponseSeconds);
+            await _db.SaveChangesAsync();
 
             return MoveResult.Ok();
         }
 
         /// <summary>
+        /// Từ chối đề nghị đi lại: huỷ đề nghị và KHÔNG trừ lượt (đặc tả 3.2).
+        /// Trả về false nếu không có đề nghị nào đang chờ để xử lý.
+        /// </summary>
+        public async Task<bool> RejectUndoAsync(int matchId, int userId)
+        {
+            var match = await _db.Matches.FirstOrDefaultAsync(m => m.Id == matchId);
+
+            if (match == null || match.UndoRequestedBy == null)
+            {
+                return false;
+            }
+
+            if (match.UndoRequestedBy == userId)
+            {
+                return false;
+            }
+
+            ClearUndoRequest(match);
+            await _db.SaveChangesAsync();
+
+            return true;
+        }
+
+        /// <summary>
+        /// Đề nghị đi lại đã hết 30 giây: huỷ và KHÔNG trừ lượt. Gọi bởi đồng hồ nền mỗi giây
+        /// nên đây là nơi duy nhất có thể dọn đề nghị khi đối thủ đóng tab.
+        /// </summary>
+        public async Task<bool> ExpireUndoRequestAsync(int matchId)
+        {
+            var match = await _db.Matches.FirstOrDefaultAsync(m => m.Id == matchId);
+
+            if (match == null || match.UndoRequestExpiresAt == null)
+            {
+                return false;
+            }
+
+            if (match.UndoRequestExpiresAt.Value > DateTime.UtcNow)
+            {
+                return false;
+            }
+
+            ClearUndoRequest(match);
+            await _db.SaveChangesAsync();
+
+            return true;
+        }
+
+        /// <summary>
         /// Chấp nhận đề nghị đi lại: lùi 2 ply trên cây và khôi phục thế cờ.
-        /// Không hoàn lại thời gian đã trôi.
+        /// Không hoàn lại thời gian đã trôi. Đây là lúc mới trừ lượt.
         /// </summary>
         public async Task<MoveResult> AcceptUndoAsync(int matchId, int userId)
         {
-            var match = await _db.Matches
-                .Include(m => m.Moves)
-                .FirstOrDefaultAsync(m => m.Id == matchId);
+            var match = await _db.Matches.FirstOrDefaultAsync(m => m.Id == matchId);
 
             if (match == null || match.Status != StatusPlaying)
             {
@@ -347,10 +469,31 @@ namespace _23DTHD6_DemoBanCo.Services
                 return MoveResult.Fail("Bạn không tham gia ván này.");
             }
 
-            var ordered = match.Moves.OrderBy(m => m.Id).ToList();
+            // Lượt trừ theo phe ĐÃ ĐỀ NGHỊ, không phải phe bấm nút đồng ý. Nếu tính theo
+            // phe bấm nút thì mỗi lần đề nghị thành công sẽ trừ nhầm sang đối thủ.
+            int? requesterSide = match.UndoRequestedBy.HasValue
+                ? ResolveSide(match, match.UndoRequestedBy.Value)
+                : null;
+
+            if (requesterSide == null)
+            {
+                return MoveResult.Fail("Không có yêu cầu đi lại nào đang chờ trả lời.");
+            }
+
+            if (match.UndoRequestedBy == userId)
+            {
+                return MoveResult.Fail("Bạn không thể tự chấp nhận yêu cầu của chính mình.");
+            }
+
+            var ordered = await _db.MatchMoves
+                .Where(m => m.MatchId == matchId)
+                .OrderBy(m => m.Id)
+                .ToListAsync();
 
             if (ordered.Count < 2)
             {
+                ClearUndoRequest(match);
+                await _db.SaveChangesAsync();
                 return MoveResult.Fail("Chưa có đủ nước đi để đi lại.");
             }
 
@@ -362,23 +505,196 @@ namespace _23DTHD6_DemoBanCo.Services
                 : ordered.Where(m => m.Id > target.Value).ToList();
 
             _db.MatchMoves.RemoveRange(toRemove);
-            await _db.SaveChangesAsync();
 
-            var remaining = await _db.MatchMoves
-                .Where(m => m.MatchId == matchId)
-                .OrderBy(m => m.Id)
-                .ToListAsync();
+            var remaining = ordered
+                .Where(m => target == null || m.Id <= target.Value)
+                .ToList();
 
             match.Fen = remaining.Count == 0 ? GameEvaluator.InitialFen : remaining[^1].FenAfter;
             match.TurnSide = remaining.Count == 0 ? 0 : remaining[^1].Side;
             match.LastMoveAt = DateTime.UtcNow;
 
-            if (side.Value == 0) match.RedUndoCount++;
+            if (requesterSide.Value == 0) match.RedUndoCount++;
             else match.BlackUndoCount++;
+
+            ClearUndoRequest(match);
 
             await _db.SaveChangesAsync();
 
             return MoveResult.Ok();
+        }
+
+        /// <summary>
+        /// Xoá đề nghị đi lại khỏi ván. Không đụng tới bộ đếm lượt, vì đề nghị bị huỷ
+        /// (từ chối / hết hạn) thì người xin không mất lượt nào.
+        /// </summary>
+        private static void ClearUndoRequest(Match match)
+        {
+            match.UndoRequestedBy = null;
+            match.UndoRequestExpiresAt = null;
+        }
+
+        // =========================================
+        // Xin hoà
+        // =========================================
+
+        /// <summary>
+        /// Xin hoà: chỉ ghi nhận đề nghị và mở hạn 30 giây cho đối thủ (đặc tả 3.3).
+        /// Trả về MoveResult.Ok khi đề nghị đã được gửi đi.
+        /// </summary>
+        public async Task<MoveResult> OfferDrawAsync(int matchId, int userId)
+        {
+            var match = await _db.Matches.FirstOrDefaultAsync(m => m.Id == matchId);
+
+            if (match == null || match.Status != StatusPlaying)
+            {
+                return MoveResult.Fail("Ván đấu không còn hoạt động.");
+            }
+
+            if (IsCountingDown(match))
+            {
+                return MoveResult.Fail(CountingDownMessage);
+            }
+
+            if (ResolveSide(match, userId) == null)
+            {
+                return MoveResult.Fail("Bạn không tham gia ván này.");
+            }
+
+            if (match.DrawOfferedBy == userId)
+            {
+                return MoveResult.Fail("Bạn đang chờ đối thủ trả lời yêu cầu hoà.");
+            }
+
+            match.DrawOfferState = OfferStatePending;
+            match.DrawOfferedBy = userId;
+            match.DrawOfferExpiresAt = DateTime.UtcNow.AddSeconds(DrawResponseSeconds);
+            await _db.SaveChangesAsync();
+
+            return MoveResult.Ok();
+        }
+
+        /// <summary>
+        /// Từ chối đề nghị hoà: huỷ và ván đi tiếp bình thường.
+        /// Trả về false nếu không có đề nghị nào đang chờ.
+        /// </summary>
+        public async Task<bool> RejectDrawAsync(int matchId, int userId)
+        {
+            var match = await _db.Matches.FirstOrDefaultAsync(m => m.Id == matchId);
+
+            if (match == null
+                || match.DrawOfferState != OfferStatePending
+                || match.DrawOfferedBy == userId)
+            {
+                return false;
+            }
+
+            ClearDrawOffer(match);
+            await _db.SaveChangesAsync();
+
+            return true;
+        }
+
+        /// <summary>
+        /// Đề nghị hoà hết 30 giây: huỷ và ván đi tiếp. Gọi bởi đồng hồ nền mỗi giây.
+        /// </summary>
+        public async Task<bool> ExpireDrawOfferAsync(int matchId)
+        {
+            var match = await _db.Matches.FirstOrDefaultAsync(m => m.Id == matchId);
+
+            if (match == null || match.DrawOfferExpiresAt == null)
+            {
+                return false;
+            }
+
+            if (match.DrawOfferExpiresAt.Value > DateTime.UtcNow)
+            {
+                return false;
+            }
+
+            ClearDrawOffer(match);
+            await _db.SaveChangesAsync();
+
+            return true;
+        }
+
+        /// <summary>
+        /// Chấp nhận đề nghị hoà của đối thủ: kết thúc ván hoà.
+        /// Trả về lý do kết thúc để hub chỉ cần phát một lần.
+        /// </summary>
+        public async Task<MatchEndReason> AcceptDrawAsync(int matchId, int userId)
+        {
+            var match = await _db.Matches.FirstOrDefaultAsync(m => m.Id == matchId);
+
+            if (match == null
+                || match.Status != StatusPlaying
+                || match.DrawOfferState != OfferStatePending
+                || match.DrawOfferedBy == null
+                || match.DrawOfferedBy == userId)
+            {
+                return MatchEndReason.None;
+            }
+
+            await FinishMatchAsync(match, MatchEndReason.AgreedDraw);
+            return MatchEndReason.AgreedDraw;
+        }
+
+        private static void ClearDrawOffer(Match match)
+        {
+            match.DrawOfferState = OfferStateNone;
+            match.DrawOfferedBy = null;
+            match.DrawOfferExpiresAt = null;
+        }
+
+        // =========================================
+        // Tái đấu
+        // =========================================
+
+        /// <summary>
+        /// Bấm "Tái đấu". Khi cả hai cùng bấm thì hàm trả về ván mới đã tạo; ngược lại
+        /// trả null nghĩa là vẫn đang chờ đối thủ.
+        ///
+        /// Tái đấu luôn ĐỔI BÊN (đặc tả R14): ván cũ bên đỏ thì ván mới bên đen.
+        /// </summary>
+        public async Task<Match?> RequestRematchAsync(int matchId, int userId)
+        {
+            var match = await _db.Matches.FirstOrDefaultAsync(m => m.Id == matchId);
+
+            if (match == null || match.Status != StatusFinished)
+            {
+                return null;
+            }
+
+            int? side = ResolveSide(match, userId);
+
+            if (side == null)
+            {
+                return null;
+            }
+
+            if (side.Value == 0) match.RedRematchBy = userId;
+            else match.BlackRematchBy = userId;
+
+            // Phải đủ hai bên mới tạo ván mới. Người chưa bấm thì RedRematchBy/BlackRematchBy
+            // còn null, nên điều kiện này tự động loại cả trường hợp chỉ mình muốn tái đấu.
+            if (match.RedRematchBy == null || match.BlackRematchBy == null)
+            {
+                match.RematchState = OfferStatePending;
+                await _db.SaveChangesAsync();
+                return null;
+            }
+
+            match.RematchState = OfferStateDone;
+            await _db.SaveChangesAsync();
+
+            return await StartMatchAsync(
+                match.RoomId,
+                match.BlackUserId,   // đổi bên: bên đen cũ lên ghế đỏ
+                match.RedUserId,
+                match.Type,
+                match.TimeLimitSeconds,
+                (AiDifficulty)match.AiDifficulty,
+                countdownSeconds: 0);
         }
 
         // =========================================
@@ -520,25 +836,18 @@ namespace _23DTHD6_DemoBanCo.Services
             return MoveResult.Ok(MatchEndReason.Resign);
         }
 
-        /// <summary>Xin hoà và được đối phương đồng ý thì kết thúc ván hoà.</summary>
-        public async Task<MoveResult> AgreeDrawAsync(int matchId, int userId)
+        /// <summary>
+        /// Ván còn trong thời hạn được phép tái đấu không. Sau khi ván xong, phòng giữ
+        /// trạng thái FINISHED trong 10 phút rồi hết cửa tái đấu (đặc tả R14).
+        /// </summary>
+        public static bool CanRematch(Match match)
         {
-            var match = await _db.Matches.FirstOrDefaultAsync(m => m.Id == matchId);
-
-            if (match == null || match.Status != StatusPlaying)
+            if (match.Status != StatusFinished || match.EndedAt == null)
             {
-                return MoveResult.Fail("Ván đấu không còn hoạt động.");
+                return false;
             }
 
-            int? side = ResolveSide(match, userId);
-
-            if (side == null)
-            {
-                return MoveResult.Fail("Bạn không tham gia ván này.");
-            }
-
-            await FinishMatchAsync(match, MatchEndReason.AgreedDraw);
-            return MoveResult.Ok(MatchEndReason.AgreedDraw);
+            return (DateTime.UtcNow - match.EndedAt.Value).TotalSeconds < RematchWindowSeconds;
         }
 
         // =========================================

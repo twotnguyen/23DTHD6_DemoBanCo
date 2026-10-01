@@ -1,18 +1,17 @@
 ﻿<!DOCTYPE html>
-<html lang="en">
+<html lang="vi">
 <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>@ViewData["Title"] - _23DTHD6_DemoBanCo</title>
+    <title>@ViewData["Title"] - Cờ Tướng Online</title>
     <link rel="stylesheet" href="~/lib/bootstrap/dist/css/bootstrap.min.css" />
     <link rel="stylesheet" href="~/css/site.css" asp-append-version="true" />
-    <link rel="stylesheet" href="~/_23DTHD6_DemoBanCo.styles.css" asp-append-version="true" />
 </head>
 <body>
     <header>
         <nav class="navbar navbar-expand-sm navbar-toggleable-sm navbar-light bg-white border-bottom box-shadow mb-3">
             <div class="container-fluid">
-                <a class="navbar-brand" asp-area="" asp-controller="Home" asp-action="Index">_23DTHD6_DemoBanCo</a>
+                <a class="navbar-brand" asp-area="" asp-controller="Home" asp-action="Index">Cờ Tướng Online</a>
                 <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target=".navbar-collapse" aria-controls="navbarSupportedContent"
                         aria-expanded="false" aria-label="Toggle navigation">
                     <span class="navbar-toggler-icon"></span>
@@ -22,16 +21,34 @@
                         <li class="nav-item">
                             <a class="nav-link text-dark" asp-area="" asp-controller="Home" asp-action="Index">Trang chủ</a>
                         </li>
-                        <li class="nav-item">
-                            <a class="nav-link text-dark" asp-area="" asp-controller="Home" asp-action="Privacy">Giới thiệu</a>
-                        </li>
                         @if (User.Identity?.IsAuthenticated == true)
                         {
                             <li class="nav-item">
-                                <a class="nav-link text-dark" asp-area="" asp-controller="Room" asp-action="Index">Phòng chơi</a>
+                                <a class="nav-link text-dark" asp-area="" asp-controller="Room" asp-action="Lobby">Sảnh chơi</a>
                             </li>
-                            <li class="nav-item d-flex align-items-center">
-                                <span class="navbar-text me-2">@User.FindFirst("display_name")?.Value</span>
+                            <li class="nav-item">
+                                <a class="nav-link text-dark" asp-area="" asp-controller="Profile" asp-action="Leaderboard">Xếp hạng</a>
+                            </li>
+                            <li class="nav-item">
+                                <a class="nav-link text-dark" asp-area="" asp-controller="Profile" asp-action="History">Lịch sử</a>
+                            </li>
+                            <li class="nav-item">
+                                <a class="nav-link text-dark" asp-area="" asp-controller="Social" asp-action="Friends">Bạn bè</a>
+                            </li>
+                            <li class="nav-item">
+                                @* Chỉ báo tin chưa đọc (đặc tả 5.2). Số đếm do server tính
+                                   sẵn nên không cần gọi hub chỉ để vẽ chấm đỏ. *@
+                                <a class="nav-link text-dark position-relative" asp-area="" asp-controller="Social" asp-action="Messages">
+                                    Tin nhắn
+                                    @* Chấm đỏ tin chưa đọc: view component tự tính số đếm nên
+                                       không phải gọi service ở từng trang. *@
+                                    @await Component.InvokeAsync("UnreadBadge")
+                                </a>
+                            </li>
+                            <li class="nav-item">
+                                <a class="nav-link text-dark" asp-area="" asp-controller="Account" asp-action="Profile">
+                                    @User.FindFirst("display_name")?.Value
+                                </a>
                             </li>
                             <li class="nav-item">
                                 <form asp-controller="Account" asp-action="Logout" method="post" class="d-inline">
@@ -61,7 +78,7 @@
 
     <footer class="border-top footer text-muted">
         <div class="container">
-            &copy; 2026 - _23DTHD6_DemoBanCo - <a asp-area="" asp-controller="Home" asp-action="Privacy">Privacy</a>
+            &copy; 2026 - Cờ Tướng Online - Đồ án môn QL-DA-CNTT (23DTHD6)
         </div>
     </footer>
     <script src="~/lib/jquery/dist/jquery.min.js"></script>

@@ -63,11 +63,59 @@ namespace _23DTHD6_DemoBanCo.Models
 
         public int AiDifficulty { get; set; } = -1;
 
+        /// <summary>
+        /// Mốc hết hạn đếm ngược 3-2-1 mở đầu ván (đặc tả 2.3), null khi không còn đếm.
+        /// Đồng hồ và luật chống treo ván đều bỏ qua cho tới khi quá mốc này, nên bên đỏ
+        /// không mất thời gian trong lúc khán giả vẫn nhìn thấy đồng hồ đếm ngược.
+        /// </summary>
+        public DateTime? CountdownEndsAt { get; set; }
+
         public DateTime StartedAt { get; set; }
 
+        /// <summary>Mốc thời gian ván kết thúc, null khi ván còn chạy.</summary>
         public DateTime? EndedAt { get; set; }
 
-        /// <summary>Thế cờ hiện tại theo chuẩn FEN Xiangqi, server là nguồn chân lý.</summary>
+
+        /// <summary>
+        /// Trạng thái đề nghị tái đấu: 0 = chưa ai đề nghị, 1 = đang chờ đối thủ trả lời,
+        /// 2 = cả hai đồng ý và ván mới đã được tạo. Người đề nghị nằm ở
+        /// <see cref="RedRematchBy"/> / <see cref="BlackRematchBy"/> theo phe của họ.
+        /// </summary>
+        public int RematchState { get; set; }
+
+        /// <summary>UserId bên đỏ đã bấm "Tái đấu", null nếu chưa.</summary>
+        public int? RedRematchBy { get; set; }
+
+        /// <summary>UserId bên đen đã bấm "Tái đấu", null nếu chưa.</summary>
+        public int? BlackRematchBy { get; set; }
+
+        /// <summary>
+        /// Trạng thái đề nghị hoà: 0 = không có, 1 = đang chờ, 2 = đã kết thúc ván.
+        /// Người đề nghị nằm ở <see cref="DrawOfferedBy"/> là UserId, 0 = chưa có ai.
+        /// </summary>
+        public int DrawOfferState { get; set; }
+
+        /// <summary>UserId người đề nghị hoà, null nếu không có đề nghị nào đang chờ.</summary>
+        public int? DrawOfferedBy { get; set; }
+
+        /// <summary>
+        /// Mốc thời gian hết hạn của đề nghị hoà. Đồng hồ nền dùng để tự huỷ sau 30 giây
+        /// (đặc tả 3.3) vì client có thể đóng tab, không gửi được câu trả lời.
+        /// </summary>
+        public DateTime? DrawOfferExpiresAt { get; set; }
+
+        /// <summary>
+        /// Mốc hết hạn của lượt chờ đối thủ đồng ý đi lại, null nếu không có đề nghị nào.
+        /// Hết hạn thì huỷ đề nghị mà KHÔNG trừ lượt (đặc tả 3.2 chỉ trừ khi đi lại thành công).
+        /// </summary>
+        public DateTime? UndoRequestExpiresAt { get; set; }
+
+        /// <summary>UserId người vừa đề nghị đi lại, null nếu không có đề nghị nào đang chờ.</summary>
+        public int? UndoRequestedBy { get; set; }
+
+        /// <summary>
+        /// Thế cờ hiện tại theo chuẩn FEN Xiangqi, server là nguồn chân lý.
+        /// </summary>
         public string Fen { get; set; } = "";
 
         public ICollection<MatchMove> Moves { get; set; } = new List<MatchMove>();
@@ -107,8 +155,26 @@ namespace _23DTHD6_DemoBanCo.Models
 
         public string SanMove { get; set; } = "";
 
-        /// <summary>Thế cờ sau khi đi, phục vụ phát hiện lặp thế cờ và xem lại.</summary>
+        /// <summary>Thế cờ sau khi đi, phục biểu diễn lặp thế cờ và xem lại.</summary>
         public string FenAfter { get; set; } = "";
+
+        /// <summary>
+        /// 1 nếu nước đi này do máy cờ đi, 0 nếu do người chơi bấm.
+        /// Dùng để widget thống kê AI (đặc tả 9.2) biết số liệu nào thuộc ván máy.
+        /// </summary>
+        public bool IsAiMove { get; set; }
+
+        /// <summary>Số thế cờ máy đã duyệt khi suy nghĩ nước đi này.</summary>
+        public int AiNodesEvaluated { get; set; }
+
+        /// <summary>Độ sâu tìm kiếm máy đạt được (2 / 4 / 6 theo cấp độ).</summary>
+        public int AiDepthReached { get; set; }
+
+        /// <summary>Thời gian máy tính nước đi này, tính bằng mili giây.</summary>
+        public int AiElapsedMs { get; set; }
+
+        /// <summary>Biến chính (PV) của lượt tìm kiếm, chuỗi SAN các nước tốt nhất.</summary>
+        public string AiPrincipalVariation { get; set; } = "";
 
         public DateTime CreatedAt { get; set; }
     }

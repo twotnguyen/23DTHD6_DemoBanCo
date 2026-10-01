@@ -1,0 +1,109 @@
+@using System.Globalization
+@using _23DTHD6_DemoBanCo.Services
+
+@{
+    ViewData["Title"] = "Lịch sử ván đấu";
+
+    // MatchHistoryService đã quy đổi sẵn nhãn tiếng Việt (Thắng/Thua, Dễ/Trung bình/Khó)
+    // nên tầng trên hiển thị y nguyên, không dịch lại lần hai.
+    var items = (List<MatchHistoryService.MatchHistoryItem>)ViewBag.Items;
+    var displayName = (string)ViewBag.DisplayName;
+
+    int wins = items.Count(i => i.Result == 1);
+    int losses = items.Count - wins;
+}
+
+<div class="container py-4">
+    <div class="d-flex flex-wrap justify-content-between align-items-end gap-2 mb-3">
+        <div>
+            <h1 class="h3 mb-1">Lịch sử ván đấu</h1>
+            <p class="text-muted mb-0">
+                @(string.IsNullOrEmpty(displayName) ? "Các ván đã đấu của bạn" : $"Các ván đã đấu của {displayName}"),
+                mới nhất trước. Chỉ hiện tối đa @MatchHistoryService.DefaultTake ván gần nhất.
+            </p>
+        </div>
+        <div class="btn-group" role="group" aria-label="Chuyển trang">
+            <a class="btn btn-outline-primary" asp-controller="Profile" asp-action="Leaderboard">Bảng xếp hạng</a>
+            <a class="btn btn-outline-primary" asp-controller="Profile" asp-action="History">Lịch sử ván đấu</a>
+        </div>
+    </div>
+
+    @if (items.Count == 0)
+    {
+        <div class="card shadow-sm">
+            <div class="card-body text-center py-5">
+                <div class="display-6 mb-2" aria-hidden="true">&#129302;</div>
+                <h2 class="h5 mb-2">Chưa có ván đấu nào</h2>
+                <p class="text-muted mb-3">
+                    Bạn chưa đánh ván nào với máy. Ván đấu xong sẽ xuất hiện ở đây kèm
+                    nút xem lại từng nước đi.
+                </p>
+                <a class="btn btn-primary" asp-controller="Room" asp-action="Lobby">Về sảnh và tìm trận</a>
+            </div>
+        </div>
+    }
+    else
+    {
+        <div class="d-flex flex-wrap gap-3 mb-3">
+            @* text-bg-* chỉ có từ Bootstrap 5.2, bản 5.1.0 ở đây không có class đó
+               nên phải ghép bg-* với text-*. *@
+            <span class="badge bg-success text-white">Thắng @wins</span>
+            <span class="badge bg-danger text-white">Thua @losses</span>
+            <span class="badge bg-secondary text-white">Tổng @items.Count ván</span>
+        </div>
+
+        <div class="card shadow-sm">
+            <div class="table-responsive">
+                <table class="table table-sm table-hover align-middle mb-0">
+                    <thead class="table-light">
+                        <tr>
+                            <th scope="col" class="text-center" style="width:110px;">Kết quả</th>
+                            <th scope="col" style="width:180px;">Đối thủ</th>
+                            <th scope="col" style="width:150px;">Cấp độ máy</th>
+                            <th scope="col" class="text-center" style="width:110px;">Số nước</th>
+                            <th scope="col" style="width:190px;">Thời gian bắt đầu</th>
+                            <th scope="col" class="text-center" style="width:130px;">Xem lại</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var m in items)
+                        {
+                            bool won = m.Result == 1;
+
+                            @* Ván với máy thì service luôn đặt OpponentName = "Máy", hiện badge
+                               cho nhận ra ngay thay vì phải đoán từ tên. *@
+                            bool isAi = string.Equals(m.OpponentName, "Máy", StringComparison.Ordinal);
+
+                            <tr>
+                                <td class="text-center">
+                                    <span class="badge @(won ? "bg-success text-white" : "bg-danger text-white")">@m.ResultLabel</span>
+                                </td>
+                                <td>
+                                    @if (isAi)
+                                    {
+                                        <span class="badge bg-dark text-white me-1" title="Đấu với máy">&#129302;</span>
+                                    }
+                                    @* Razor tự HTML-encode @m.OpponentName. *@
+                                    <span>@m.OpponentName</span>
+                                </td>
+                                <td>@m.DifficultyLabel</td>
+                                <td class="text-center">@m.MoveCount</td>
+                                <td>@m.StartedAt.ToString("dd/MM/yyyy HH:mm", CultureInfo.InvariantCulture)</td>
+                                <td class="text-center">
+                                    @* /Replay đang được xây dựng song song; liên kết vẫn trỏ
+                                       đúng đường dẫn để không phải sửa lại view sau đó. *@
+                                    <a class="btn btn-sm btn-outline-primary"
+                                       href="/Replay/@m.MatchId">Xem lại</a>
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    }
+
+    <p class="mt-3 mb-0">
+        <a asp-controller="Room" asp-action="Lobby">Về sảnh</a>
+    </p>
+</div>

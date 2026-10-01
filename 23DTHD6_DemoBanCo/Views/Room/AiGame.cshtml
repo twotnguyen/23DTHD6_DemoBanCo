@@ -1,0 +1,551 @@
+@using _23DTHD6_DemoBanCo.Models
+@{
+    // SCR-AI-GAME: ván đấu với máy. Định nghĩa 6.3.
+    //   - Chọn cầm Đỏ / Đen / Ngẫu nhiên: quyết định ở Lobby trước khi tạo ván.
+    //   - Không giới hạn thời gian (TimeLimitSeconds = 0) nên không có đồng hồ đếm.
+    //   - Undo tối đa 3 lượt, mỗi lượt lùi trọn 1 cặp nước đi (2 ply) — không cần
+    //     xin phép đối thủ vì đối thủ là máy.
+    //   - Không có tính năng gợi ý nước đi (đặc tả 6.1 giữ phạm vi thuần đối kháng).
+    var matchId = (int)ViewBag.MatchId;
+    var initialFen = (string)ViewBag.Fen;
+    var turnSide = (int)ViewBag.TurnSide;
+    var playerSide = (int)ViewBag.PlayerSide;
+    var difficulty = (AiDifficulty)ViewBag.AiDifficulty;
+    var undoLeft = (int)ViewBag.UndoLeft;
+    var status = (string)ViewBag.Status;
+
+    var levelName = difficulty switch
+    {
+        AiDifficulty.Easy => "Dễ",
+        AiDifficulty.Medium => "Trung bình",
+        AiDifficulty.Hard => "Khó",
+        _ => "Dễ"
+    };
+
+    var sideName = playerSide == 0 ? "Đỏ" : "Đen";
+    var maxUndo = 3;
+}
+
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="utf-8" />
+    <title>Đấu với máy - Cờ Tướng Online</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/microsoft-signalr/8.0.7/signalr.min.js"></script>
+    <style>
+        body { font-family: system-ui, -apple-system, "Segoe UI", sans-serif; margin: 0; background: #f4f5f7; color: #222; }
+        .wrap { max-width: 1080px; margin: 0 auto; padding: 20px 16px 50px; }
+        .layout { display: flex; gap: 20px; align-items: flex-start; flex-wrap: wrap; }
+        .board-col { flex: 1 1 620px; min-width: 300px; }
+        .side-col { flex: 0 1 330px; }
+        .card { background: #fff; border: 1px solid #ddd; border-radius: 10px; padding: 16px; margin-bottom: 16px; }
+        h1 { font-size: 20px; margin: 0 0 4px; }
+        h2 { font-size: 15px; margin: 0 0 10px; }
+        .muted { font-size: 13px; color: #777; line-height: 1.6; }
+        .badge-ai { display: inline-block; background: #e8f0fe; color: #174ea6; border-radius: 12px; padding: 2px 10px; font-size: 12px; font-weight: 700; }
+
+        button { padding: 9px 14px; border: none; border-radius: 6px; background: #1a73e8; color: #fff; cursor: pointer; font-size: 14px; font-weight: 600; }
+        button:hover { background: #1558b0; }
+        button.secondary { background: #fff; color: #333; border: 1px solid #ccc; }
+        button.secondary:hover { background: #f0f0f0; }
+        button.danger { background: #d93025; }
+        button.danger:hover { background: #b3251c; }
+        button:disabled { opacity: .5; cursor: not-allowed; }
+        .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-top: 10px; }
+        input[type=text] { padding: 8px 10px; border: 1px solid #ccc; border-radius: 6px; font-size: 14px; width: 100%; box-sizing: border-box; }
+
+        /* ---- Bàn cờ: dùng đúng lớp .xb-* mà chess-board.js tự gắn ---- */
+        #boardRoot { position: relative; width: 100%; max-width: 620px; margin: 0 auto; user-select: none; touch-action: none; }
+        #boardRoot img.board-image { display: block; width: 100%; height: auto; pointer-events: none; }
+        .xb-layer { position: absolute; inset: 0; }
+        .xb-piece { position: absolute; width: 7%; height: auto; transform: translate(-50%, -50%); z-index: 10; transition: left .18s ease, top .18s ease, transform .18s ease; }
+        .xb-piece.xb-noanim { transition: none; }
+        .xb-piece.xb-dragging { transition: none; z-index: 40; cursor: grabbing; }
+        /* Trợ năng DT-21: viền phân biệt phe không dựa vào màu hoa văn. */
+        .xb-piece.xb-side-red { border-radius: 50%; box-shadow: 0 0 0 2px #d32f2f, 0 1px 3px rgba(0,0,0,.35); }
+        .xb-piece.xb-side-black { border-radius: 50%; box-shadow: 0 0 0 2px #1565c0, 0 1px 3px rgba(0,0,0,.35); }
+        .xb-marker { position: absolute; transform: translate(-50%, -50%); pointer-events: none; z-index: 5; }
+        .xb-marker-target { width: 4.2%; padding-bottom: 4.2%; height: 0; border-radius: 50%; background: rgba(25,135,84,.45); }
+        .xb-marker-capture { width: 8.4%; padding-bottom: 8.4%; height: 0; border-radius: 50%; border: 2px solid #d32f2f; box-sizing: border-box; animation: xb-blink 1s ease-in-out infinite; }
+        .xb-marker-last { width: 8.4%; padding-bottom: 8.4%; height: 0; border-radius: 4px; border: 2px solid #ff8f00; box-sizing: border-box; }
+        .xb-marker-check { width: 8.8%; padding-bottom: 8.8%; height: 0; border-radius: 50%; border: 3px solid #d32f2f; box-sizing: border-box; animation: xb-shake .5s ease-in-out infinite; }
+        .xb-selection { position: absolute; width: 8.4%; padding-bottom: 8.4%; height: 0; border-radius: 50%; border: 2px dashed #1a73e8; box-sizing: border-box; pointer-events: none; z-index: 20; }
+        .xb-status { text-align: center; font-size: 14px; color: #555; margin-top: 10px; min-height: 18px; }
+        @@keyframes xb-blink { 0%,100% { opacity: .35; } 50% { opacity: 1; } }
+        @@keyframes xb-shake {
+            0%,100% { transform: translate(-50%,-50%) scale(1); }
+            25% { transform: translate(-50%,-50%) scale(1.06); }
+            75% { transform: translate(-50%,-50%) scale(.98); }
+        }
+
+        /* ---- Widget thống kê AI (đặc tả 9.2) ---- */
+        .metrics { font-size: 13px; }
+        .metrics dt { color: #666; margin-top: 7px; font-weight: 400; }
+        .metrics dd { margin: 0; font-weight: 700; font-variant-numeric: tabular-nums; color: #174ea6; }
+        .metrics-table { width: 100%; border-collapse: collapse; font-size: 12px; margin-top: 10px; }
+        .metrics-table th, .metrics-table td { border-bottom: 1px solid #eee; padding: 5px 4px; text-align: left; }
+        .metrics-table th { color: #777; font-weight: 600; }
+        .metrics-table td { font-variant-numeric: tabular-nums; }
+
+        /* ---- Công cụ demo mạng (đặc tả 9.3) ---- */
+        #demoPanel { position: fixed; right: 14px; bottom: 14px; z-index: 300; display: none; }
+        #demoPanel.open { display: block; }
+        .demo-inner { background: #fff; border: 2px dashed #d93025; border-radius: 10px; padding: 14px; box-shadow: 0 8px 26px rgba(0,0,0,.2); }
+        .demo-inner h3 { font-size: 13px; margin: 0 0 8px; color: #d93025; text-transform: uppercase; }
+
+        .result-overlay { position: fixed; inset: 0; background: rgba(0,0,0,.68); z-index: 250; display: none; align-items: center; justify-content: center; }
+        .result-overlay.open { display: flex; }
+        .result-box { background: #fff; border-radius: 14px; padding: 28px 34px; text-align: center; }
+        .result-title { font-size: 26px; font-weight: 800; margin-bottom: 8px; }
+        .result-note { font-size: 14px; color: #666; margin-bottom: 18px; }
+    </style>
+</head>
+<body>
+    <div class="wrap">
+        <div class="layout">
+
+            <!-- ============ BÀN CỜ ============ -->
+            <div class="board-col">
+                <div class="card">
+                    <h1>Đấu với máy</h1>
+                    <div class="muted">
+                        Bạn cầm quân <strong>@sideName</strong> &middot;
+                        Máy chơi mức <span class="badge-ai">@levelName</span> &middot;
+                        Không giới hạn thời gian
+                    </div>
+
+                    <div class="row">
+                        <button type="button" class="secondary" id="soundToggle" title="Bật / tắt âm thanh">&#128266;</button>
+                        <span class="muted" id="turnStatus">Đang tải ván...</span>
+                    </div>
+
+                    <!-- Container RIÊNG cho bàn: ChessBoardView.init() gọi innerHTML = ''
+                         nên không được chứa thêm danh sách hay nút bấm nào bên trong. -->
+                    <div id="boardRoot"></div>
+                </div>
+            </div>
+
+            <!-- ============ CỘT ĐIỀU KHIỂN ============ -->
+            <div class="side-col">
+                <div class="card">
+                    <h2>Điều khiển</h2>
+
+                    @* Bộ đếm lượt đi lại hiện luôn (đặc tả 6.3): người chơi cần biết còn
+                       bao nhiêu trước khi bấm, không nên bấm mới thấy nút tắt. *@
+                    <div class="muted" id="undoCounter">Lượt đi lại: @undoLeft/@maxUndo</div>
+                    <div class="row">
+                        <button type="button" id="btnUndo"
+                                title="Lùi trọn 1 cặp nước đi: 1 nước của máy + 1 nước của bạn">
+                            Đi lại
+                        </button>
+                        <button type="button" class="danger" id="btnResign"
+                                onclick="return confirm('Bạn chắc chắn muốn đầu hàng ván này?');">
+                            Đầu hàng
+                        </button>
+                    </div>
+                    <p class="muted">
+                        Ván này không tính Elo. Kết quả được lưu vào lịch sử để bạn xem lại.
+                    </p>
+                    <div class="row">
+                        <a asp-controller="Profile" asp-action="History" style="font-size:13px;">Lịch sử ván đấu</a>
+                        <a asp-controller="Room" asp-action="Lobby" style="font-size:13px;">Về sảnh</a>
+                    </div>
+                </div>
+
+                @* ---------- WIDGET THỐNG KÊ AI (đặc tả 9.2) ----------
+                   Bằng chứng trước hội đồng rằng engine là Minimax/Alpha-Beta tự viết,
+                   không gọi API cờ bên ngoài: đây là số liệu thật lấy từ lượt tìm kiếm
+                   vừa rồi, đã lưu vào bảng MatchMoves chứ không phải số ước lượng. *@
+                <div class="card">
+                    <h2>Thông số máy cờ</h2>
+                    <div class="muted" style="margin-bottom:8px;">Số liệu từ lượt tìm kiếm thực tế của máy.</div>
+
+                    <dl class="metrics" id="aiMetrics">
+                        <dt>Số thế cờ đã duyệt</dt>
+                        <dd id="mNodes">—</dd>
+                        <dt>Độ sâu tìm kiếm</dt>
+                        <dd id="mDepth">—</dd>
+                        <dt>Thời gian tính toán</dt>
+                        <dd id="mTime">—</dd>
+                        <dt>Nước đi dự tính tối ưu</dt>
+                        <dd id="mBest">—</dd>
+                    </dl>
+
+                    <div id="mPv" class="muted" style="margin-top:8px;"></div>
+
+                    <table class="metrics-table" id="mTable" style="display:none;">
+                        <thead>
+                            <tr><th>#</th><th>Nước</th><th>Node</th><th>Độ sâu</th><th>ms</th></tr>
+                        </thead>
+                        <tbody id="mRows"></tbody>
+                    </table>
+                </div>
+            </div>
+
+        </div>
+    </div>
+
+    <!-- Kết quả ván -->
+    <div class="result-overlay" id="resultOverlay">
+        <div class="result-box">
+            <div class="result-title" id="resultTitle">Kết thúc</div>
+            <div class="result-note" id="resultNote"></div>
+            <div class="row" style="justify-content:center;">
+                <button type="button" id="btnNewGame">Ván mới</button>
+                <a class="btn btn-outline-secondary" id="btnReplay" href="#">Xem lại ván</a>
+                <a class="btn btn-outline-secondary" asp-controller="Room" asp-action="Lobby">Về sảnh</a>
+            </div>
+        </div>
+    </div>
+
+    <!-- Công cụ demo: ẩn, mở bằng Ctrl+Shift+D -->
+    <div id="demoPanel">
+        <div class="demo-inner">
+            <h3>Công cụ demo</h3>
+            <p class="muted" style="margin:0 0 8px;">Mô phỏng rớt mạng và quay lại.</p>
+            <div class="row" style="margin-top:0;">
+                <button type="button" id="btnDropNet" class="danger">Mô phỏng mất mạng</button>
+                <button type="button" id="btnReconnect">Tái kết nối tức thì</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Thứ tự nạp: âm thanh và bàn cờ phải có mặt TRƯỚC script trang, vì script
+         trang tra window.ChessBoardView / window.SoundBoard để nối sự kiện. -->
+    <script src="/js/audio.js"></script>
+    <script src="/js/chess-board.js"></script>
+
+    <!-- MỘT connection cho cả trang, tạo TRƯỚC script trang. -->
+    <script>
+        window.__pageConnection = new signalR.HubConnectionBuilder()
+            .withUrl('/aiHub')
+            .withAutomaticReconnect()
+            .build();
+        window.__readyPromise = window.__pageConnection.start();
+    </script>
+
+    <script>
+        (function () {
+            'use strict';
+
+            const matchId = @matchId;
+            const initialFen = @Html.Raw(Json.Serialize(initialFen));
+            const playerSide = @playerSide;
+            const startTurnSide = @turnSide;
+            const maxUndo = @maxUndo;
+
+            const connection = window.__pageConnection;
+            const readyPromise = window.__readyPromise;
+
+            let undoLeft = @undoLeft;
+            let finished = @(status == "FINISHED" ? "true" : "false");
+            let lastInCheck = false;
+
+            /* ---------- Bàn cờ ---------- */
+            const boardRoot = document.getElementById('boardRoot');
+            const board = window.ChessBoardView
+                ? window.ChessBoardView.init(boardRoot, '/images/')
+                : null;
+
+            function setUndoCounter() {
+                const el = document.getElementById('undoCounter');
+                const btn = document.getElementById('btnUndo');
+
+                if (el) el.textContent = 'Lượt đi lại: ' + undoLeft + '/' + maxUndo;
+
+                if (btn) {
+                    btn.disabled = undoLeft <= 0 || finished;
+                    // Đặc tả 3.2 yêu cầu đúng câu tooltip này khi hết lượt.
+                    btn.title = undoLeft <= 0
+                        ? 'Bạn đã sử dụng hết ' + maxUndo + ' lượt đi lại trong ván này'
+                        : 'Lùi trọn 1 cặp nước đi: 1 nước của máy + 1 nước của bạn';
+                }
+            }
+
+            function setTurn(text) {
+                const el = document.getElementById('turnStatus');
+                if (el) el.textContent = text;
+            }
+
+            /* ---------- Âm thanh ---------- */
+            const soundBtn = document.getElementById('soundToggle');
+
+            function paintSoundButton() {
+                if (!soundBtn || !window.SoundBoard) return;
+                soundBtn.textContent = window.SoundBoard.isMuted() ? '🔇' : '🔊';
+            }
+
+            if (soundBtn) {
+                soundBtn.addEventListener('click', function () {
+                    window.SoundBoard.setMuted(!window.SoundBoard.isMuted());
+                    paintSoundButton();
+                    if (!window.SoundBoard.isMuted()) window.SoundBoard.playMove();
+                });
+                paintSoundButton();
+            }
+
+            /* ---------- Vẽ ván ban đầu ----------
+               applyMatch() tự parse FEN, vẽ quân, đổi lượt và xoay bàn theo phe.
+               canMove = false vì chưa nối xong, tránh bấm nhầm trong lúc chờ. */
+            function drawInitial() {
+                if (!board) return;
+
+                board.applyMatch({
+                    fen: initialFen,
+                    turnSide: startTurnSide,
+                    yourSide: playerSide,
+                    canMove: false,
+                    legalMoves: []
+                });
+            }
+
+            /* ---------- Kết quả ---------- */
+            function endReasonText(reason) {
+                const map = {
+                    1: 'Chiếu hết!',
+                    2: 'Bị vây khốn, bên thua.',
+                    3: 'Lặp thế cờ — hoà.',
+                    4: 'Đầu hàng.',
+                    5: 'Hết giờ.',
+                    6: 'Mất kết nối.',
+                    7: 'Treo ván quá lâu.',
+                    8: 'Hòa do hai bên đồng ý.',
+                    9: 'Ván bị gián đoạn.'
+                };
+                return map[reason] || 'Kết thúc ván.';
+            }
+
+            function showResult(payload) {
+                finished = true;
+                setUndoCounter();
+
+                const overlay = document.getElementById('resultOverlay');
+                const title = document.getElementById('resultTitle');
+                const note = document.getElementById('resultNote');
+                const replay = document.getElementById('btnReplay');
+
+                let headline = 'Hòa';
+                if (payload.youWon === true) headline = 'Bạn thắng!';
+                else if (payload.youWon === false) headline = 'Bạn thua.';
+
+                if (title) title.textContent = headline;
+                if (note) note.textContent = endReasonText(payload.endReason);
+                if (replay) replay.href = '/Replay/' + payload.matchId;
+                if (overlay) overlay.classList.add('open');
+
+                if (window.SoundBoard) window.SoundBoard.playEndGame();
+            }
+
+            /* ---------- Hub: trạng thái ván ---------- */
+            connection.on('MatchStarted', function (p) {
+                if (!board) return;
+                board.applyMatch({
+                    fen: p.fen,
+                    turnSide: p.turnSide,
+                    yourSide: playerSide,
+                    canMove: false,
+                    legalMoves: []
+                });
+            });
+
+            connection.on('MatchUpdated', function (p) {
+                if (board) board.applyMatch(p);
+
+                undoLeft = typeof p.undoLeft === 'number' ? p.undoLeft : undoLeft;
+                setUndoCounter();
+
+                const inCheck = p.checkSide != null;
+
+                if (p.status === 'FINISHED') {
+                    showResult(p);
+                    return;
+                }
+
+                // Chuông chiếu tướng chỉ kêu lúc MỚI chuyển sang bị chiếu, không kêu
+                // lặp mỗi lần nhận payload (sẽ thành tiếng ù ù kéo dài).
+                if (inCheck && !lastInCheck && window.SoundBoard) {
+                    window.SoundBoard.playCheck();
+                }
+                lastInCheck = inCheck;
+
+                setTurn(p.canMove
+                    ? 'Đến lượt bạn.'
+                    : 'Máy đang suy nghĩ...');
+            });
+
+            connection.on('MoveRejected', function (p) {
+                setTurn(p.error || 'Nước đi bị từ chối.');
+                if (window.SoundBoard) window.SoundBoard.playCheck();
+            });
+
+            /* ---------- Hub: widget thống kê AI ---------- */
+            function fmtNumber(n) {
+                return Number(n || 0).toLocaleString('vi-VN');
+            }
+
+            connection.on('AiStats', function (p) {
+                const set = function (id, text) {
+                    const el = document.getElementById(id);
+                    if (el) el.textContent = text;
+                };
+
+                if (!p.hasStats) {
+                    set('mNodes', '—');
+                    set('mDepth', '—');
+                    set('mTime', '—');
+                    set('mBest', '—');
+                    set('mPv', '');
+                    const t = document.getElementById('mTable');
+                    if (t) t.style.display = 'none';
+                    return;
+                }
+
+                // Đặc tả 9.2: "Số thế cờ đã duyệt: 48,210 nodes", "Độ sâu: 4/4",
+                // "Thời gian: 320 ms", "Nước đi dự tính tối ưu: C2.5".
+                set('mNodes', fmtNumber(p.nodesEvaluated) + ' nodes');
+                set('mDepth', 'Depth ' + p.depthReached + '/' + p.maxDepth);
+                set('mTime', p.elapsedMs + ' ms');
+                set('mBest', p.bestMove || '—');
+                set('mPv', p.principalVariation ? 'Biến chính: ' + p.principalVariation : '');
+
+                const rows = p.moves || [];
+                const tbody = document.getElementById('mRows');
+                const table = document.getElementById('mTable');
+
+                if (tbody) {
+                    tbody.innerHTML = '';
+                    rows.slice(-12).forEach(function (m) {
+                        const tr = document.createElement('tr');
+                        tr.innerHTML =
+                            '<td>' + m.moveNumber + '</td>' +
+                            '<td>' + m.san + '</td>' +
+                            '<td>' + fmtNumber(m.nodesEvaluated) + '</td>' +
+                            '<td>' + m.depthReached + '/' + p.maxDepth + '</td>' +
+                            '<td>' + m.elapsedMs + '</td>';
+                        tbody.appendChild(tr);
+                    });
+                }
+
+                if (table) table.style.display = rows.length ? '' : 'none';
+            });
+
+            /* ---------- Gửi nước đi ---------- */
+            if (board) {
+                board.onMove = function (from, to, pieceId) {
+                    readyPromise
+                        .then(function () {
+                            return connection.invoke('SubmitMove', matchId, {
+                                pieceId: pieceId,
+                                fromRow: from.row,
+                                fromCol: from.col,
+                                toRow: to.row,
+                                toCol: to.col
+                            });
+                        })
+                        .then(function (result) {
+                            if (result && result.success === false) {
+                                setTurn(result.error || 'Nước đi bị từ chối.');
+                            }
+                        })
+                        .catch(function (err) {
+                            console.error('Lỗi gửi nước đi', err);
+                        });
+                };
+            }
+
+            /* ---------- Nút điều khiển ---------- */
+            const undoBtn = document.getElementById('btnUndo');
+
+            if (undoBtn) {
+                undoBtn.addEventListener('click', function () {
+                    readyPromise
+                        .then(function () { return connection.invoke('Undo', matchId); })
+                        .then(function (error) {
+                            // Undo trả về chuỗi lỗi, chuỗi rỗng nghĩa là thành công.
+                            if (error) setTurn(error);
+                        })
+                        .catch(function (err) {
+                            console.error('Lỗi đi lại', err);
+                        });
+                });
+            }
+
+            const resignBtn = document.getElementById('btnResign');
+
+            if (resignBtn) {
+                resignBtn.addEventListener('click', function () {
+                    readyPromise
+                        .then(function () { return connection.invoke('Resign', matchId); })
+                        .catch(function (err) { console.error('Lỗi đầu hàng', err); });
+                });
+            }
+
+            const newBtn = document.getElementById('btnNewGame');
+
+            if (newBtn) {
+                newBtn.addEventListener('click', function () {
+                    window.location.href = '/Room/Lobby';
+                });
+            }
+
+            /* ---------- Công cụ demo mạng (đặc tả 9.3) ----------
+               Ctrl+Shift+D mở/đóng. Ván với máy chỉ có một người chơi nên "mất mạng"
+               không làm xử thua như PvP; nó dùng để trình diễn cơ chế kết nối lại và
+               bảng cờ được đồng bộ lại từ server sau khi mở lại trang. */
+            const demoPanel = document.getElementById('demoPanel');
+
+            document.addEventListener('keydown', function (e) {
+                if (e.ctrlKey && e.shiftKey && (e.key === 'D' || e.key === 'd')) {
+                    e.preventDefault();
+                    if (demoPanel) demoPanel.classList.toggle('open');
+                }
+            });
+
+            const dropBtn = document.getElementById('btnDropNet');
+            const reconnectBtn = document.getElementById('btnReconnect');
+
+            if (dropBtn) {
+                dropBtn.addEventListener('click', async function () {
+                    setTurn('Đã ngắt kết nối (mô phỏng).');
+                    try {
+                        await connection.stop();
+                    } catch (err) {
+                        console.error(err);
+                    }
+                });
+            }
+
+            if (reconnectBtn) {
+                reconnectBtn.addEventListener('click', async function () {
+                    setTurn('Đang kết nối lại...');
+                    try {
+                        await connection.start();
+                        setTurn('Đã kết nối lại.');
+                    } catch (err) {
+                        console.error(err);
+                        setTurn('Không kết nối lại được.');
+                    }
+                });
+            }
+
+            /* ---------- Khởi động ---------- */
+            drawInitial();
+            setUndoCounter();
+
+            /* Đồng bộ lại ván ngay khi mở trang: ván được tạo ở sảnh nên kết nối
+               SignalR vừa mở chưa từng nhận sự kiện nào. Không gọi SyncMatch thì bàn
+               cờ đứng ở thế khởi tạo, không có nước hợp lệ nào để bấm — đặc biệt là
+               với người cầm Đen, máy đã đi nước mở đầu trước khi trang này tồn tại. */
+            readyPromise
+                .then(function () { return connection.invoke('SyncMatch', matchId); })
+                .catch(function (err) { console.error('Không đồng bộ được ván:', err); });
+
+            if (finished) {
+                setTurn('Ván này đã kết thúc.');
+            } else {
+                setTurn(startTurnSide === playerSide ? 'Đến lượt bạn.' : 'Máy đang suy nghĩ...');
+            }
+        })();
+    </script>
+</body>
+</html>

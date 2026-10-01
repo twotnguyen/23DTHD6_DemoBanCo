@@ -1,0 +1,151 @@
+@using _23DTHD6_DemoBanCo.Models
+@{
+    // Danh sách bạn + lời mời kết bạn. "Đang online" suy ra từ ConnectionId khác rỗng,
+    // tức là người đó đang có một kết nối SignalR sống (đang ở trong phòng nào đó).
+    var friends = (List<(int UserId, string DisplayName, FriendshipStatus Status)>)ViewBag.Friends;
+    var online = (HashSet<int>)ViewBag.Online;
+    var incoming = ViewBag.Incoming as List<dynamic>;
+}
+
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="utf-8" />
+    <title>Bạn bè - Cờ Tướng Online</title>
+    <style>
+        body { font-family: system-ui, -apple-system, "Segoe UI", sans-serif; margin: 0; background: #f4f5f7; color: #222; }
+        .wrap { max-width: 900px; margin: 0 auto; padding: 24px 16px 60px; }
+        h1 { font-size: 24px; margin: 0 0 4px; }
+        .sub { color: #666; font-size: 14px; margin-bottom: 20px; }
+        .card { background: #fff; border: 1px solid #ddd; border-radius: 10px; padding: 18px; margin-bottom: 16px; }
+        h2 { font-size: 17px; margin: 0 0 12px; }
+        label { display: block; font-size: 14px; margin-bottom: 4px; color: #444; }
+        input[type=text] { padding: 9px 10px; border: 1px solid #ccc; border-radius: 6px; width: 100%; max-width: 320px; font-size: 15px; box-sizing: border-box; }
+        button { padding: 8px 14px; border: none; border-radius: 6px; background: #1a73e8; color: #fff; cursor: pointer; font-size: 14px; font-weight: 600; }
+        button:hover { background: #1558b0; }
+        button.secondary { background: #fff; color: #333; border: 1px solid #ccc; }
+        button.secondary:hover { background: #f0f0f0; }
+        button.danger { background: #d93025; }
+        button.danger:hover { background: #b3251c; }
+        .row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin-top: 10px; }
+        .note { font-size: 13px; color: #777; margin-top: 8px; line-height: 1.6; }
+        .alert { background: #fdecea; border: 1px solid #f5c6c2; color: #c5221f; padding: 10px 12px; border-radius: 8px; margin-bottom: 16px; font-size: 14px; }
+        .ok { background: #e6f4ea; border: 1px solid #ceead6; color: #137333; padding: 10px 12px; border-radius: 8px; margin-bottom: 16px; font-size: 14px; }
+        .empty { color: #888; font-size: 14px; padding: 10px 0; }
+
+        .people { list-style: none; padding: 0; margin: 0; }
+        .people li { border-bottom: 1px solid #eee; padding: 12px 2px; display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
+        .people li:last-child { border-bottom: none; }
+        .who { font-weight: 600; }
+        .username { font-size: 12px; color: #888; margin-left: 6px; }
+        .dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 5px; vertical-align: middle; }
+        .dot.on { background: #34a853; }
+        .dot.off { background: #bdc1c6; }
+        .state { font-size: 13px; color: #666; }
+        .state.on { color: #137333; }
+        a.msg { display: inline-block; padding: 8px 14px; border-radius: 6px; background: #1a73e8; color: #fff; text-decoration: none; font-size: 14px; font-weight: 600; }
+        a.msg:hover { background: #1558b0; }
+        .msg-off { display: inline-block; padding: 8px 14px; border-radius: 6px; background: #eee; color: #999; font-size: 14px; font-weight: 600; cursor: not-allowed; }
+    </style>
+</head>
+<body>
+    <div class="wrap">
+        <h1>Bạn bè</h1>
+        <div class="sub">Kết bạn để mời vào phòng cờ và nhắn tin riêng.</div>
+
+        @if (TempData["Notice"] != null)
+        {
+            <div class="ok" style="margin-top:16px;">@TempData["Notice"]</div>
+        }
+
+        @* Chỉ cho phép nhắn tin với bạn bè đã chấp nhận (đặc tả EC-02). Lời mời đang
+           chờ chưa đủ tư cách, nên không hiện nút Nhắn tin ở những dòng đó. *@
+        <div class="card">
+            <h2>Lời mời đến</h2>
+            @if (incoming == null || incoming.Count == 0)
+            {
+                <div class="empty">Không có lời mời kết bạn nào đang chờ.</div>
+            }
+            else
+            {
+                <ul class="people">
+                    @foreach (var req in incoming)
+                    {
+                        <li>
+                            <div>
+                                <span class="who">@req.DisplayName</span>
+                                <span class="username">@@@req.Username</span>
+                            </div>
+                            <form asp-controller="Social" asp-action="RespondFriendRequest" method="post" class="row" style="margin-top:0;">
+                                @Html.AntiForgeryToken()
+                                <input type="hidden" name="requestId" value="@req.RequestId" />
+                                <button type="submit" name="accept" value="true">Chấp nhận</button>
+                                <button type="submit" name="accept" value="false" class="secondary">Từ chối</button>
+                            </form>
+                        </li>
+                    }
+                </ul>
+            }
+        </div>
+
+        <div class="card">
+            <h2>Danh sách bạn (@(friends?.Count ?? 0))</h2>
+            @if (friends == null || friends.Count == 0)
+            {
+                <div class="empty">Bạn chưa có bạn bè nào. Hãy thêm bằng tên đăng nhập bên dưới.</div>
+            }
+            else
+            {
+                <ul class="people">
+                    @foreach (var f in friends)
+                    {
+                        var isOnline = online.Contains(f.UserId);
+                        <li>
+                            <div>
+                                <span class="who">@f.DisplayName</span>
+                                <div class="state @(isOnline ? "on" : "")">
+                                    <span class="dot @(isOnline ? "on" : "off")"></span>
+                                    @(isOnline ? "Đang online" : "Ngoại tuyến")
+                                </div>
+                            </div>
+                            <div class="row" style="margin-top:0;">
+                                @* Ngoại tuyến thì vẫn cho mở khung chat: người nhận sẽ đọc
+                                   tin khi quay lại, và nút vẫn hoạt động bình thường. *@
+                                <a class="msg" asp-controller="Social" asp-action="Messages" asp-route-with="@f.UserId">Nhắn tin</a>
+                                <form asp-controller="Social" asp-action="RemoveFriend" method="post" style="display:inline;">
+                                    @Html.AntiForgeryToken()
+                                    <input type="hidden" name="friendUserId" value="@f.UserId" />
+                                    <button type="submit" class="danger"
+                                            onclick="return confirm('Xoá bạn @f.DisplayName khỏi danh sách bạn bè?');">
+                                        Xoá bạn
+                                    </button>
+                                </form>
+                            </div>
+                        </li>
+                    }
+                </ul>
+            }
+        </div>
+
+        <div class="card">
+            <h2>Thêm bạn mới</h2>
+            <form asp-controller="Social" asp-action="SendFriendRequest" method="post">
+                @Html.AntiForgeryToken()
+                <label for="username">Tên đăng nhập của người bạn muốn kết</label>
+                <input type="text" id="username" name="username" placeholder="Ví dụ: minh123" maxlength="20" required />
+                <div class="row">
+                    <button type="submit">Gửi lời mời</button>
+                </div>
+            </form>
+            <p class="note">
+                Chỉ người đã chấp nhận lời mời mới nhắn tin riêng và nhận lời mời vào phòng cờ.
+            </p>
+        </div>
+
+        <p class="note" style="margin-top:18px;">
+            <a asp-controller="Room" asp-action="Lobby">Về sảnh</a> &middot;
+            <a asp-controller="Social" asp-action="Messages">Tin nhắn</a>
+        </p>
+    </div>
+</body>
+</html>

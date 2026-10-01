@@ -82,7 +82,12 @@ namespace _23DTHD6_DemoBanCo.Services
                 blackUserId,
                 MatchType.Ai,
                 timeLimitSeconds: 0,
-                aiDifficulty: difficulty);
+                aiDifficulty: difficulty,
+                // Truyền 0 TƯỚNG: ván đấu máy không có đếm ngược 3-2-1.
+                // Người chơi đã chọn xong cấp độ và bên cầm rồi mới bấm "Bắt đầu",
+                // nên bắt họ chờ 3 giây chỉ để làm vở. StartMatchAsync mặc định là 3,
+                // bỏ qua đối số này thì ván AI sẽ bị chặn nhận nước đi trong lúc đếm.
+                countdownSeconds: 0);
 
             room.ActiveMatchId = match.Id;
             await _db.SaveChangesAsync();
@@ -213,60 +218,58 @@ namespace _23DTHD6_DemoBanCo.Services
         }
 
         /// <summary>
-        /// Chuỗi thống kê cho widget AI (đặc tả 9.2): số node đã duyệt, độ sâu đạt được,
-        /// thời gian suy nghĩ, và nước đi dự đoán.
+        /// Chuỗi số liệu cho widget AI (đặc tả 9.2): số thế cờ máy đã duyệt, độ sâu đạt
+        /// được, thời gian suy nghĩ, và nước đi máy đã chọn.
         ///
-        /// GIẢ ĐỊNH ĐÃ GHI RÕ: bảng MatchMove KHÔNG có cột lưu nodes/depth/thời gian của máy
-        /// (đã kiểm tra Models/GameModels.cs). Nên không có dữ liệu lưu để đọc lại, và
-        /// thống kê chỉ có ý nghĩa tại thời điểm máy vừa suy nghĩ. Vì vậy hàm này chạy
-        /// AiEngine một lần trên thế cờ hiện tại để lấy số liệu, thay vì đọc lịch sử.
-        ///
-        /// Hệ quả cần nói rõ: gọi hàm này tốn thêm một lượt suy nghĩ của máy, và thống kê
-        /// là ước lượng ở thế cờ hiện tại chứ không phải số liệu của nước đi đã đi.
-        /// Nếu sau này muốn thống kê chính xác theo từng nước đi, cần thêm cột
-        /// AiNodes / AiDepth / AiElapsedMs / AiPrincipalVariation vào MatchMove.
+        /// ĐỌC THẲNG TỪ DB, KHÔNG CHẠY LẠI ENGINE. Bảng MatchMove đã có đủ cột lưu số
+        /// liệu (IsAiMove / AiNodesEvaluated / AiDepthReached / AiElapsedMs /
+        /// AiPrincipalVariation) nên chỉ cần đọc nước đi của máy gần nhất là ra đúng
+        /// thông số của nước đi ĐÃ ĐI. Bản cũ phải gọi AiEngine.FindBestMove thêm một
+        /// lượt chỉ để lấy số liệu: vừa tốn thời gian thật (mất thêm tới 3 giây ở
+        /// cấp Khó), vừa báo cáo ước lượng ở thế cờ hiện tại chứ không phải số liệu
+        /// của nước vừa đi — tức là con số sai mà người xem không hề biết.
         /// </summary>
         public async Task<string> GetStatsAsync(int matchId)
         {
-            var match = await _db.Matches.AsNoTracking()
-                .FirstOrDefaultAsync(m => m.Id == matchId);
+            var lastMachineMove = await _db.MatchMoves
+                .AsNoTracking()
+                .Where(m => m.MatchId == matchId && m.IsAiMove)
+                .OrderByDescending(m => m.Id)
+                .FirstOrDefaultAsync();
 
-            if (match is null)
-                return "Không tìm thấy ván đấu.";
+            if (lastMachineMove is null)
+                return "Máy chưa đi nước nào trong ván này nên chưa có số liệu.";
 
-            if (match.Type != MatchType.Ai)
-                return "Ván này không phải ván đấu với máy.";
+            return FormatMachineMoveStats(lastMachineMove);
+        }
 
-            if (string.IsNullOrEmpty(match.Fen))
-                return "Ván đấu chưa có thế cờ để thống kê.";
+        /// <summary>
+        /// Danh sách nước đi của máy, cũng kèm số liệu đã lưu. Widget AI dùng để vẽ bảng
+        /// "mỗi nước máy đi tốn bao nhiêu" thay vì chỉ nhìn nước cuối cùng.
+        /// </summary>
+        public async Task<List<MatchMove>> GetMachineMovesAsync(int matchId)
+        {
+            return await _db.MatchMoves
+                .AsNoTracking()
+                .Where(m => m.MatchId == matchId && m.IsAiMove)
+                .OrderBy(m => m.Id)
+                .ToListAsync();
+        }
 
-            ChessBoard board;
+        /// <summary>
+        /// Một dòng số liệu của nước đi máy, dùng chung cho GetStatsAsync và payload
+        /// "AiStats" của hub để hai nơi luôn hiện cùng một câu, không lệch nhau.
+        /// </summary>
+        public static string FormatMachineMoveStats(MatchMove move)
+        {
+            string variation = string.IsNullOrWhiteSpace(move.AiPrincipalVariation)
+                ? "không có"
+                : move.AiPrincipalVariation;
 
-            try
-            {
-                board = GameEvaluator.FromFen(match.Fen);
-            }
-            catch (FormatException)
-            {
-                return "Thế cờ hiện tại không đọc được, không có thống kê.";
-            }
-
-            var sideToMove = match.TurnSide == 0 ? Side.Red : Side.Black;
-            var difficulty = (AiDifficulty)match.AiDifficulty;
-
-            var result = AiEngine.FindBestMove(board, sideToMove, difficulty);
-
-            string predicted = result.BestMove is null
-                ? "Máy không còn nước đi nào"
-                : GameEvaluator.ToSan(board, result.BestMove);
-
-            string variation = string.IsNullOrEmpty(result.PrincipalVariation)
-                ? "Không có"
-                : result.PrincipalVariation;
-
-            return $"Nước dự đoán: {predicted} | Độ sâu: {result.DepthReached} | "
-                 + $"Số node: {result.NodesEvaluated} | Thời gian: {result.ElapsedMs} ms | "
-                 + $"Biến chính: {variation}";
+            return $"Nước máy vừa đi: {move.SanMove} | Số thế cờ đã duyệt: {move.AiNodesEvaluated:N0} nodes"
+                 + $" | Độ sâu: {move.AiDepthReached} | Thời gian tính toán: {move.AiElapsedMs} ms"
+                 + $" | Nước đi dự tính tối ưu: {move.SanMove}"
+                 + $" | Biến chính: {variation}";
         }
 
         // =========================================
@@ -332,7 +335,41 @@ namespace _23DTHD6_DemoBanCo.Services
                 match.EndedAt = DateTime.UtcNow;
                 match.WinnerSide = -1;
                 await _db.SaveChangesAsync();
+                return;
             }
+
+            await PersistAiResultAsync(matchId, aiResult);
+        }
+
+        /// <summary>
+        /// Ghi số liệu của lượt suy nghĩ vừa rồi vào đúng dòng nước đi mà
+        /// SubmitMoveAsync vừa tạo.
+        ///
+        /// Số liệu chỉ có ý nghĩa khi đi kèm chính nước đi đó, nên phải bám theo Id
+        /// lớn nhất của ván: nước vừa ghi luôn là nước có Id lớn nhất. Ghi vào một
+        /// dòng khác (ví dụ nước trước) sẽ làm widget đối chiếu với cây nước đi rơi
+        /// lệch nhau, và lịch sử ván sau này cũng mang số liệu sai.
+        ///
+        /// Không có dòng nào (vì lệnh xoá/lùi chạy xen) thì bỏ qua: mất số liệu một
+        /// nước còn hơn làm hỏng cả ván.
+        /// </summary>
+        private async Task PersistAiResultAsync(int matchId, AiMoveResult aiResult)
+        {
+            var written = await _db.MatchMoves
+                .Where(m => m.MatchId == matchId)
+                .OrderByDescending(m => m.Id)
+                .FirstOrDefaultAsync();
+
+            if (written is null)
+                return;
+
+            written.IsAiMove = true;
+            written.AiNodesEvaluated = aiResult.NodesEvaluated;
+            written.AiDepthReached = aiResult.DepthReached;
+            written.AiElapsedMs = (int)aiResult.ElapsedMs;
+            written.AiPrincipalVariation = aiResult.PrincipalVariation;
+
+            await _db.SaveChangesAsync();
         }
 
         /// <summary>

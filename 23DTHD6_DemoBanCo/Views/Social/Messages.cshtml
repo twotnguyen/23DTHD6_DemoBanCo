@@ -1,0 +1,195 @@
+@using _23DTHD6_DemoBanCo.Models
+@using _23DTHD6_DemoBanCo.Services
+@{
+
+    // Khung tin nhắn 1-1. Cột trái là danh sách cuộc hội thoại kèm badge chưa đọc,
+    // cột phải là lịch sử với người được chọn.
+    var conversations = ViewBag.Conversations as
+        List<(int OtherUserId, string DisplayName, string LastMessage, DateTime LastAt, int Unread)>;
+    var peerId = (int)ViewBag.PeerId;
+    var peerName = (string)ViewBag.PeerName;
+    var history = ViewBag.History as List<DirectMessage>;
+    var stickers = ViewBag.Stickers as IReadOnlyList<(string Code, string Emoji, string Label)>;
+    var currentUserId = (int)ViewBag.CurrentUserId;
+}
+
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="utf-8" />
+    <title>Tin nhắn - Cờ Tướng Online</title>
+    <style>
+        body { font-family: system-ui, -apple-system, "Segoe UI", sans-serif; margin: 0; background: #f4f5f7; color: #222; }
+        .wrap { max-width: 1000px; margin: 0 auto; padding: 24px 16px 60px; }
+        h1 { font-size: 24px; margin: 0 0 16px; }
+        .alert { background: #fdecea; border: 1px solid #f5c6c2; color: #c5221f; padding: 10px 12px; border-radius: 8px; margin-bottom: 16px; font-size: 14px; }
+        .layout { display: flex; gap: 16px; align-items: stretch; }
+        .conv-list { flex: 0 0 280px; background: #fff; border: 1px solid #ddd; border-radius: 10px; overflow: hidden; }
+        .conv-list h2 { font-size: 15px; margin: 0; padding: 12px 14px; border-bottom: 1px solid #eee; }
+        .conv-list a { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 11px 14px; border-bottom: 1px solid #f2f2f2; text-decoration: none; color: #222; }
+        .conv-list a:hover { background: #f5f8fc; }
+        .conv-list a.active { background: #e8f0fe; }
+        .conv-name { font-weight: 600; font-size: 14px; }
+        .conv-last { font-size: 12px; color: #888; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 170px; }
+        .badge { background: #d93025; color: #fff; border-radius: 10px; padding: 1px 7px; font-size: 11px; font-weight: 700; }
+
+        .chat { flex: 1; background: #fff; border: 1px solid #ddd; border-radius: 10px; display: flex; flex-direction: column; min-height: 460px; }
+        .chat-head { padding: 12px 16px; border-bottom: 1px solid #eee; font-weight: 600; }
+        .chat-body { flex: 1; padding: 14px 16px; overflow-y: auto; }
+        .bubble { max-width: 70%; padding: 8px 12px; border-radius: 12px; margin-bottom: 8px; font-size: 14px; word-break: break-word; white-space: pre-wrap; }
+        .bubble.mine { background: #e8f0fe; margin-left: auto; }
+        .bubble.theirs { background: #f1f3f4; }
+        .bubble-time { display: block; font-size: 11px; color: #999; margin-top: 3px; }
+        .empty { color: #999; font-size: 14px; text-align: center; padding: 30px 0; }
+
+        .composer { border-top: 1px solid #eee; padding: 10px 12px; position: relative; }
+        .composer-row { display: flex; gap: 8px; align-items: center; }
+        .composer-row input[type=text] { flex: 1; min-width: 0; padding: 9px 11px; border: 1px solid #ccc; border-radius: 6px; font-size: 15px; }
+        button { padding: 9px 15px; border: none; border-radius: 6px; background: #1a73e8; color: #fff; cursor: pointer; font-size: 14px; font-weight: 600; }
+        button:hover { background: #1558b0; }
+        button.secondary { background: #fff; color: #333; border: 1px solid #ccc; }
+        button.icon { padding: 9px 11px; font-size: 17px; line-height: 1; }
+
+        /* Khay cảm xúc nhanh: 12 sticker, bấm 1 chạm là gửi ngay */
+        .tray { position: absolute; bottom: 58px; left: 12px; background: #fff; border: 1px solid #ddd; border-radius: 10px; padding: 10px; display: none; grid-template-columns: repeat(6, 42px); gap: 6px; box-shadow: 0 6px 20px rgba(0,0,0,.14); z-index: 10; }
+        .tray.open { display: grid; }
+        .tray button { background: transparent; font-size: 22px; padding: 6px; border-radius: 6px; }
+        .tray button:hover { background: #f0f0f0; }
+    </style>
+</head>
+<body>
+    <div class="wrap">
+        <h1>Tin nhắn</h1>
+
+        @if (TempData["Notice"] != null)
+        {
+            <div class="alert">@TempData["Notice"]</div>
+        }
+
+        <div class="layout">
+
+            <div class="conv-list">
+                <h2>Cuộc hội thoại</h2>
+                @if (conversations == null || conversations.Count == 0)
+                {
+                    <div class="empty" style="padding:20px 12px;">
+                        Chưa có cuộc hội thoại nào.<br />
+                        <a asp-controller="Social" asp-action="Friends" style="color:#1a73e8;">Thêm bạn</a> để bắt đầu.
+                    </div>
+                }
+                else
+                {
+                    foreach (var c in conversations)
+                    {
+                        var isActive = c.OtherUserId == peerId;
+                        <a asp-controller="Social" asp-action="Messages" asp-route-with="@c.OtherUserId"
+                           class="@(isActive ? "active" : "")">
+                            <div style="min-width:0;">
+                                <div class="conv-name">@c.DisplayName</div>
+                                <div class="conv-last">@c.LastMessage</div>
+                            </div>
+                            @if (c.Unread > 0)
+                            {
+                                <span class="badge">@c.Unread</span>
+                            }
+                        </a>
+                    }
+                }
+            </div>
+
+            <div class="chat">
+                @if (peerId == 0)
+                {
+                    <div class="chat-head">Chưa chọn người nào</div>
+                    <div class="empty">
+                        Chọn một cuộc hội thoại ở cột bên trái để xem và gửi tin nhắn.
+                    </div>
+                }
+                else
+                {
+                    <div class="chat-head">@peerName</div>
+
+                    <div class="chat-body" id="chatBody">
+                        @if (history == null || history.Count == 0)
+                        {
+                            <div class="empty">Chưa có tin nhắn nào. Hãy chào @peerName một câu!</div>
+                        }
+                        else
+                        {
+                            foreach (var m in history)
+                            {
+                                var mine = m.SenderId == currentUserId;
+                                // Sticker lưu mã ngắn, hiển thị bằng emoji tương ứng.
+                                var text = m.Kind == 1 && m.Sticker != null
+                                    ? (stickers?.FirstOrDefault(s => s.Code == m.Sticker).Emoji ?? m.Sticker)
+                                    : m.Body;
+                                <div class="bubble @(mine ? "mine" : "theirs")">
+                                    @text
+                                    <span class="bubble-time">@m.CreatedAt.ToLocalTime().ToString("HH:mm")</span>
+                                </div>
+                            }
+                        }
+                    </div>
+
+                    <form asp-controller="Social" asp-action="SendMessage" method="post" class="composer">
+                        @Html.AntiForgeryToken()
+                        <input type="hidden" name="toUserId" value="@peerId" />
+                        <input type="hidden" name="sticker" id="stickerField" value="" />
+
+                        @* Khay 12 sticker: bấm 1 chạm điền mã vào ô ẩn rồi gửi luôn,
+                           không cần bấm thêm nút Gửi. *@
+                        <div class="tray" id="stickerTray">
+                            @if (stickers != null)
+                            {
+                                foreach (var s in stickers)
+                                {
+                                    <button type="button" title="@s.Label - @s.Code" data-code="@s.Code">@s.Emoji</button>
+                                }
+                            }
+                        </div>
+
+                        <div class="composer-row">
+                            <button type="button" class="secondary icon" id="trayToggle" title="Cảm xúc nhanh">😀</button>
+                            <input type="text" name="body" id="bodyInput" placeholder="Nhập tin nhắn..." maxlength="500" autocomplete="off" />
+                            <button type="submit">Gửi</button>
+                        </div>
+                    </form>
+                }
+            </div>
+
+        </div>
+
+        <p style="margin-top:18px;">
+            <a asp-controller="Social" asp-action="Friends">Về danh sách bạn bè</a> &middot;
+            <a asp-controller="Room" asp-action="Lobby">Về sảnh</a>
+        </p>
+    </div>
+
+    <script>
+        (function () {
+            var tray = document.getElementById('stickerTray');
+            var toggle = document.getElementById('trayToggle');
+            var stickerField = document.getElementById('stickerField');
+            var body = document.getElementById('bodyInput');
+            var form = document.querySelector('.composer');
+            var chatBody = document.getElementById('chatBody');
+
+            if (!tray || !toggle) return;
+
+            toggle.addEventListener('click', function () {
+                tray.classList.toggle('open');
+            });
+
+            tray.querySelectorAll('button[data-code]').forEach(function (btn) {
+                btn.addEventListener('click', function () {
+                    stickerField.value = btn.getAttribute('data-code');
+                    form.submit();
+                });
+            });
+
+            // Cuộn xuống tin mới nhất ngay khi mở khung.
+            if (chatBody) chatBody.scrollTop = chatBody.scrollHeight;
+        })();
+    </script>
+</body>
+</html>

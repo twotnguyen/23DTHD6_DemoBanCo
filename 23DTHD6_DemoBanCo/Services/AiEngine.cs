@@ -124,6 +124,18 @@ namespace _23DTHD6_DemoBanCo.Services
         {
             result.NodesEvaluated++;
 
+            // Chặn thời gian phải kiểm ở MỌI node, không phải cứ 64 node như trước.
+            // Lý do: giữa hai lần kiểm, engine có thể dồn toàn bộ nhánh con của một
+            // node sâu vào, nên ván ở cấp Khó vượt ngân sách 3000ms tới ~4000ms —
+            // tức là người chơi chờ lâu gấp rưỡi so với cam kết của đặc tả 6.1.
+            // Khi hết giờ, trả luôn điểm tĩnh ở thế cờ hiện tại và đánh dấu TimedOut
+            // để lớp trên giữ kết quả tốt nhất của lượt trước.
+            if (stopwatch.ElapsedMilliseconds > budgetMs)
+            {
+                result.TimedOut = true;
+                return EvaluateBoard(board, sideToMove);
+            }
+
             if (depth == 0)
                 return EvaluateBoard(board, sideToMove);
 
@@ -134,10 +146,6 @@ namespace _23DTHD6_DemoBanCo.Services
                 bool inCheck = CheckDetector.IsInCheck(board, sideToMove);
                 return inCheck ? -KingValue - depth : -KingValue / 2;
             }
-
-            // Cắt alpha-beta khi đã tìm được nước đi tốt đủ dùng
-            if (result.NodesEvaluated % 64 == 0 && stopwatch.ElapsedMilliseconds > budgetMs)
-                return EvaluateBoard(board, sideToMove);
 
             var ordered = OrderMovesByCapture(board, moves, sideToMove);
 

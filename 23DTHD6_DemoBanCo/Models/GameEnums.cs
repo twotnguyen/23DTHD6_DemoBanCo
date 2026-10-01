@@ -20,7 +20,14 @@ namespace _23DTHD6_DemoBanCo.Models
     {
         Waiting = 0,     // Đang chờ người chơi, ai cũng vào được (nếu không khoá)
         Playing = 1,     // Đang có ván, chỉ khán giả vào được
-        Finished = 2     // Ván vừa kết thúc, chờ chủ phòng chơi lại
+        Finished = 2,    // Ván vừa kết thúc, chờ chủ phòng chơi lại
+
+        /// <summary>
+        /// Phòng đã đóng hẳn: không còn ai, không ai vào được nữa kể cả bằng link/mã/QR.
+        /// Khác với Locked (chủ phòng đang khoá tạm), Closed là vĩnh viễn theo vòng đời
+        /// của phòng nên danh sách chặn của phòng cũng hết hiệu lực.
+        /// </summary>
+        Closed = 3
     }
 
     /// <summary>Loại trận đấu quyết định luật áp dụng.</summary>

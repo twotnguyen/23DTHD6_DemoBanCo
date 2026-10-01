@@ -64,6 +64,10 @@ namespace _23DTHD6_DemoBanCo.Hubs
         // Người chơi tham gia / rời phòng
         // =========================================
 
+        /// <summary>
+        /// Vào phòng và vào group realtime. Ván xếp hạng chặn khán giả tuyệt đối
+        /// (đặc tả EC-01): phòng đó bị khoá và không ai được xem, kể cả khi có link/mã.
+        /// </summary>
         public async Task JoinRoom(int roomId, string? side)
         {
             int userId = CurrentUserId;
@@ -73,6 +77,19 @@ namespace _23DTHD6_DemoBanCo.Hubs
             var room = await _roomService.GetByIdAsync(roomId);
             if (room == null)
                 throw new HubException("Phòng không tồn tại.");
+
+            if (room.Status == RoomStatus.Closed)
+                throw new HubException("Phòng này đã đóng.");
+
+            // Chỉ chặn khi người vào KHÔNG phải đấu thủ. Hai đấu thủ được ghép từ hàng
+            // đợi đã có sẵn dòng RoomParticipant nên vẫn vào được bình thường.
+            bool isRanked = room.MatchType == MatchType.Ranked;
+            var alreadyIn = await _db.RoomParticipants
+                .AsNoTracking()
+                .AnyAsync(p => p.RoomId == roomId && p.UserId == userId);
+
+            if (isRanked && !alreadyIn)
+                throw new HubException("Ván xếp hạng không cho phép người xem.");
 
             await Groups.AddToGroupAsync(Context.ConnectionId, GetRoomGroupName(roomId));
 
@@ -139,14 +156,41 @@ namespace _23DTHD6_DemoBanCo.Hubs
         public override async Task OnDisconnectedAsync(Exception? exception)
         {
             var affected = await _roomService.GetRoomIdsByConnectionAsync(Context.ConnectionId);
+            int userId = CurrentUserId;
 
             // Mất kết nối chỉ ghi nhận cờ đếm ngược 60s, không kết thúc ván tức thời.
             await _roomService.RemoveParticipantByConnectionAsync(Context.ConnectionId);
 
             foreach (int roomId in affected)
             {
+                // Chủ phòng rời đi thì nhượng quyền cho người còn lại (đặc tả 2.3).
+                // Không có ai nhận được thì phòng sẽ đóng ngay ở nhánh dưới.
+                if (userId != 0 && await _roomService.TransferHostIfOwnerLeftAsync(roomId, userId))
+                {
+                    await Clients.Group(GetRoomGroupName(roomId)).SendAsync("HostTransferred", new
+                    {
+                        roomId,
+                        previousOwnerId = userId
+                    });
+                }
+
                 await NotifyParticipantsChangedAsync(roomId);
                 await LeaveMatchGroupsAsync(roomId);
+
+                // Không còn đấu thủ nào thì phòng đóng vĩnh viễn. Báo cả phòng trước khi
+                // đóng để các client còn treo (khán giả) biết phải tự về sảnh.
+                bool closed = await _roomService.CloseIfNoPlayersLeftAsync(roomId);
+
+                if (closed)
+                {
+                    await Clients.Group(GetRoomGroupName(roomId)).SendAsync("RoomClosed", new
+                    {
+                        roomId,
+                        reason = "Phòng đã đóng vì không còn đấu thủ nào."
+                    });
+
+                    await BroadcastRoomStateAsync(roomId);
+                }
             }
 
             await base.OnDisconnectedAsync(exception);
@@ -290,9 +334,16 @@ namespace _23DTHD6_DemoBanCo.Hubs
                     black.Side = RoomService.SideBlack;
                 }
 
+                // Chế độ trận và ngân sách giờ lấy từ phòng, không lấy từ tham số client:
+                // phòng xếp hạng phải luôn là 10 phút Rapid và không bao giờ có khán giả.
+                var roomConfig = await _db.Rooms.AsNoTracking()
+                    .FirstOrDefaultAsync(r => r.Id == roomId);
+
                 var match = await _matchService.StartMatchAsync(
-                    roomId, red.UserId, black.UserId, MatchType.Casual,
-                    timeLimitSeconds, AiDifficulty.Easy);
+                    roomId, red.UserId, black.UserId,
+                    roomConfig?.MatchType ?? MatchType.Casual,
+                    roomConfig?.TimeLimitSeconds ?? 0,
+                    AiDifficulty.Easy);
 
                 foreach (var player in new[] { red, black })
                 {
@@ -411,6 +462,15 @@ namespace _23DTHD6_DemoBanCo.Hubs
 
             if (!accept)
             {
+                // Từ chối không trừ lượt (đặc tả 3.2): việc huỷ đề nghị nằm ở service,
+                // không sửa bộ đếm ở tầng hub.
+                if (!await _matchService.RejectUndoAsync(matchId, userId))
+                {
+                    await Clients.Caller.SendAsync("UndoRejected",
+                        new { matchId, error = "Không có yêu cầu đi lại nào đang chờ trả lời." });
+                    return;
+                }
+
                 await Clients.Group(GetMatchGroupName(matchId))
                     .SendAsync("UndoResolved", new { matchId, accepted = false, byUserId = userId });
 
@@ -458,6 +518,14 @@ namespace _23DTHD6_DemoBanCo.Hubs
         /// <summary>
         /// Phát trạng thái ván cho group "match:{id}".
         /// Payload là nguồn chân lý: client vẽ bàn theo đây, không tự suy luật luật cờ.
+        ///
+        /// VÌ SAO KHÔNG PHÁT MỘT PAYLOAD CHO CẢ GROUP:
+        ///   yourSide và canMove phụ thuộc người NHẬN, không phụ thuộc người phát.
+        ///   Nếu gộp vào một Clients.Group(...).SendAsync thì cả hai đấu thủ nhận cùng
+        ///   một yourSide — tức là cả hai cùng tưởng mình cầm một phe, và người cầm
+        ///   phe không đến lượt sẽ bị khoá bàn vĩnh viễn. Vì vậy phần dùng chung được
+        ///   dựng một lần (FEN, nước hợp lệ, chiếu tướng), còn phần riêng theo người
+        ///   nhận thì gửi riêng cho từng connection.
         /// </summary>
         private async Task BroadcastMatchUpdatedAsync(int matchId)
         {
@@ -484,13 +552,17 @@ namespace _23DTHD6_DemoBanCo.Hubs
             ChessPiece? checkedKingBlack = isPlaying ? CheckDetector.GetCheckedKing(board, Side.Black) : null;
             ChessPiece? checkedKing = checkedKingRed ?? checkedKingBlack;
 
+            // Ván còn đếm ngược thì không gửi nước hợp lệ: client tô ô sẵn sẽ khiến
+            // người chơi tưởng được đi trong lúc đồng hồ 3-2-1 còn chạy.
+            bool countingDown = MatchService.IsCountingDown(match);
+
             int? checkSide = !isPlaying
                 ? null
                 : checkedKingRed != null ? 0
                 : checkedKingBlack != null ? 1
                 : (int?)null;
 
-            if (isPlaying)
+            if (isPlaying && !countingDown)
             {
                 var sideToMove = match.TurnSide == 0 ? Side.Red : Side.Black;
                 var moves = ChessRules.GetLegalMoves(board, sideToMove);
@@ -507,22 +579,14 @@ namespace _23DTHD6_DemoBanCo.Hubs
                 }
             }
 
-            int myUserId = CurrentUserId;
-            int yourSide = match.RedUserId == myUserId ? 0 : (match.BlackUserId == myUserId ? 1 : -1);
-
-            await Clients.Group(GetMatchGroupName(matchId)).SendAsync("MatchUpdated", new
+            // Phần DÙNG CHUNG: dựng một lần cho mọi người nhận.
+            var shared = new
             {
                 matchId = match.Id,
                 fen = match.Fen,
                 status = match.Status,
                 endReason = (int)match.EndReason,
                 turnSide = match.TurnSide,
-                yourSide,
-                canMove = match.Status == MatchService.StatusPlaying
-                    && yourSide == match.TurnSide
-                    && yourSide >= 0,
-                // Vị trí tướng đang bị chiếu: client vẽ viền đỏ và rung ô này.
-                // Cả ba trường đều null khi ván đã xong, để client bỏ viền đỏ.
                 checkSide,
                 checkRow = checkedKing?.Row,
                 checkCol = checkedKing?.Col,
@@ -541,15 +605,93 @@ namespace _23DTHD6_DemoBanCo.Hubs
                 redTimeLeft = match.RedTimeLeftSeconds,
                 blackTimeLeft = match.BlackTimeLeftSeconds,
                 serverTimeUtc = DateTime.UtcNow.ToString("O"),
-                undoLeft = yourSide == 0
-                    ? MatchService.MaxUndoPerSide - match.RedUndoCount
-                    : yourSide == 1
-                        ? MatchService.MaxUndoPerSide - match.BlackUndoCount
+
+                // Trạng thái đề nghị để client hiện nút trả lời ngay khi vào lại ván
+                // (F5), không bỏ sót đề nghị đang chờ.
+                drawOfferedBy = match.DrawOfferState == MatchService.OfferStatePending
+                    ? match.DrawOfferedBy
+                    : null,
+                drawSecondsLeft = match.DrawOfferState == MatchService.OfferStatePending
+                    && match.DrawOfferExpiresAt.HasValue
+                        ? (int)SecondsUntil(match.DrawOfferExpiresAt.Value, DateTime.UtcNow)
                         : 0,
-                youWon = match.Status == MatchService.StatusFinished
-                    ? yourSide >= 0 ? (int)match.WinnerSide == yourSide : (bool?)null
-                    : (bool?)null
-            });
+                undoRequestedBy = match.UndoRequestedBy,
+                undoSecondsLeft = match.UndoRequestExpiresAt.HasValue
+                    ? (int)SecondsUntil(match.UndoRequestExpiresAt.Value, DateTime.UtcNow)
+                    : 0,
+
+                // Đồng hồ ân hạn mất kết nối 60s (đặc tả EC-03) và cửa sổ tái đấu (R14).
+                disconnectedUserId = match.DisconnectedUserId,
+                disconnectSecondsLeft = match.DisconnectedAt.HasValue
+                    ? (int)SecondsUntil(match.DisconnectedAt.Value.AddSeconds(
+                        MatchService.DisconnectGraceSeconds), DateTime.UtcNow)
+                    : 0,
+                canRematch = MatchService.CanRematch(match),
+                rematchPendingBy = match.RematchState == MatchService.OfferStatePending
+                    ? new[] { match.RedRematchBy, match.BlackRematchBy }
+                        .Where(id => id.HasValue).Select(id => id!.Value).ToArray()
+                    : Array.Empty<int>()
+            };
+
+            // Danh sách connection đang ở trong group: mỗi người nhận MỘT payload
+            // riêng với yourSide đúng của mình. Gửi theo danh sách thay vì
+            // Clients.Group để tránh lỗi "cả hai cùng tưởng mình cùng phe".
+            var connections = await _db.RoomParticipants.AsNoTracking()
+                .Where(p => p.RoomId == match.RoomId && p.ConnectionId != "")
+                .Select(p => new { p.ConnectionId, p.UserId, p.Role })
+                .ToListAsync();
+
+            foreach (var seat in connections)
+            {
+                // Khán giả nhận yourSide = -1: không được đi, chỉ xem (đặc tả 4.1).
+                int side = seat.Role == ParticipantRole.Player
+                    ? (match.RedUserId == seat.UserId ? 0
+                        : match.BlackUserId == seat.UserId ? 1 : -1)
+                    : -1;
+
+                await Clients.Client(seat.ConnectionId).SendAsync("MatchUpdated", new
+                {
+                    shared.matchId,
+                    shared.fen,
+                    shared.status,
+                    shared.endReason,
+                    shared.turnSide,
+                    yourSide = side,
+                    canMove = match.Status == MatchService.StatusPlaying
+                        && side >= 0
+                        && side == match.TurnSide,
+                    shared.checkSide,
+                    shared.checkRow,
+                    shared.checkCol,
+                    shared.legalMoves,
+                    shared.lastMove,
+                    shared.capturedPieceId,
+                    shared.redTimeLeft,
+                    shared.blackTimeLeft,
+                    shared.serverTimeUtc,
+                    undoLeft = side == 0
+                        ? MatchService.MaxUndoPerSide - match.RedUndoCount
+                        : side == 1
+                            ? MatchService.MaxUndoPerSide - match.BlackUndoCount
+                            : 0,
+                    youWon = match.Status == MatchService.StatusFinished
+                        ? (side >= 0 ? (int)match.WinnerSide == side : (bool?)null)
+                        : (bool?)null,
+
+                    // Đồng hồ đếm ngược: client hiện lớp 3-2-1 và khoá bàn cho tới khi bằng 0.
+                    countdownSecondsLeft = countingDown
+                        ? (int)SecondsUntil(match.CountdownEndsAt!.Value, DateTime.UtcNow)
+                        : 0,
+                    shared.drawOfferedBy,
+                    shared.drawSecondsLeft,
+                    shared.undoRequestedBy,
+                    shared.undoSecondsLeft,
+                    shared.disconnectedUserId,
+                    shared.disconnectSecondsLeft,
+                    shared.canRematch,
+                    shared.rematchPendingBy
+                });
+            }
 
             // Khi ván kết thúc, phòng phải trở lại trạng thái chờ và bỏ ván đang chạy,
             // nếu không phòng sẽ kẹt ở Playing vĩnh viễn và không ai vào lại được.
@@ -598,6 +740,89 @@ namespace _23DTHD6_DemoBanCo.Hubs
                 spectatorCount = people.Count(p => p.Role == ParticipantRole.Spectator),
                 capacity = RoomService.MaxRoomCapacity
             });
+        }
+
+        /// <summary>
+        /// Trả trạng thái phòng cho người vừa mở trang (hoặc vừa F5).
+        ///
+        /// VÌ SAO CẦN HÀM NÀY: trước khi vào phòng chờ, trang chỉ nhận thế cờ khởi
+        /// tạo từ API tĩnh. Nếu người chơi F5 giữa lúc ván đang diễn ra, không có
+        /// sự kiện nào phát lại (ván vẫn chạy, không ai vừa đi nước nào), bàn cờ sẽ
+        /// quay về thế khởi tạo và người chơi tưởng mất hết nước đi. Hàm này trả về
+        /// id ván đang chạy để client vào thẳng chế độ thi đấu rồi đồng bộ tiếp.
+        /// </summary>
+        public async Task<object?> GetRoomState(int roomId)
+        {
+            int userId = CurrentUserIdOrThrow;
+
+            var room = await _db.Rooms.AsNoTracking()
+                .FirstOrDefaultAsync(r => r.Id == roomId);
+
+            if (room == null)
+            {
+                return null;
+            }
+
+            if (room.Status == RoomStatus.Closed)
+            {
+                return new { roomId, closed = true, activeMatchId = (int?)null, undoLeft = 0 };
+            }
+
+            int? matchId = room.Status == RoomStatus.Playing
+                ? room.ActiveMatchId
+                : null;
+
+            // Lượt đi lại còn lại tính theo phe của người gọi, đúng như nút hiển thị.
+            int undoLeft = 0;
+
+            if (matchId.HasValue)
+            {
+                var match = await _db.Matches.AsNoTracking()
+                    .FirstOrDefaultAsync(m => m.Id == matchId.Value);
+
+                if (match != null)
+                {
+                    if (match.RedUserId == userId)
+                        undoLeft = MatchService.MaxUndoPerSide - match.RedUndoCount;
+                    else if (match.BlackUserId == userId)
+                        undoLeft = MatchService.MaxUndoPerSide - match.BlackUndoCount;
+                }
+            }
+
+            return new
+            {
+                roomId,
+                closed = false,
+                activeMatchId = matchId,
+                status = room.Status.ToString(),
+                isRanked = room.MatchType == MatchType.Ranked,
+                undoLeft
+            };
+        }
+
+        /// <summary>
+        /// Phát lại toàn bộ trạng thái ván cho người gọi.
+        ///
+        /// Dùng khi bàn đang bị khoá dù không nên: hết đồng hồ đếm 3-2-1, vừa F5,
+        /// hay kết nối lại. Những lúc đó không có nước đi nào xảy ra nên không có sự
+        /// kiện nào phát tự nhiên, mà sự kiện MatchStarted lúc tạo ván lại mang danh
+        /// sách nước hợp lệ rỗng vì đang đếm — gọi hàm này là cách duy nhất để lấy
+        /// đúng nước hợp lệ mà không phải tự suy luật luật cờ ở client.
+        /// </summary>
+        public async Task GetMatchState(int matchId)
+        {
+            int userId = CurrentUserIdOrThrow;
+
+            var match = await _db.Matches.AsNoTracking()
+                .FirstOrDefaultAsync(m => m.Id == matchId);
+
+            if (match == null
+                || (match.RedUserId != userId && match.BlackUserId != userId))
+            {
+                return;
+            }
+
+            await BroadcastMatchUpdatedAsync(matchId);
         }
 
         // =========================================
@@ -699,6 +924,226 @@ namespace _23DTHD6_DemoBanCo.Hubs
         }
 
         /// <summary>
+        /// Xin đổi bên khi đã đủ hai đấu thủ. Chỉ ghi nhận và mở hạn 30 giây (đặc tả 2.3);
+        /// việc thực sự hoán ghế nằm ở RespondSideSwap khi đối thủ đồng ý.
+        /// </summary>
+        public async Task RequestSideSwap(int roomId)
+        {
+            int userId = CurrentUserIdOrThrow;
+
+            var (ok, error) = await _roomService.RequestSideSwapAsync(roomId, userId);
+
+            if (!ok)
+            {
+                await Clients.Caller.SendAsync("RoomActionRejected", new { roomId, error });
+                return;
+            }
+
+            var requester = await _roomService.GetParticipantAsync(roomId, userId);
+
+            await Clients.Group(GetRoomGroupName(roomId)).SendAsync("SideSwapRequested", new
+            {
+                roomId,
+                fromUserId = userId,
+                displayName = requester?.User?.DisplayName ?? "Người chơi",
+                secondsLeft = RoomService.SideSwapResponseSeconds
+            });
+        }
+
+        /// <summary>
+        /// Trả lời yêu cầu đổi bên. Đồng ý thì hoán ghế và xoá cờ sẵn sàng của cả hai;
+        /// từ chối thì giữ nguyên. Cả hai nhánh đều phát lại danh sách người để cả phòng
+        /// thấy ghế mới ngay lập tức.
+        /// </summary>
+        public async Task RespondSideSwap(int roomId, bool accept)
+        {
+            int userId = CurrentUserIdOrThrow;
+
+            if (accept)
+            {
+                var (ok, error) = await _roomService.AcceptSideSwapAsync(roomId, userId);
+
+                if (!ok)
+                {
+                    await Clients.Caller.SendAsync("RoomActionRejected", new { roomId, error });
+                    return;
+                }
+            }
+            else if (!await _roomService.RejectSideSwapAsync(roomId, userId))
+            {
+                await Clients.Caller.SendAsync("RoomActionRejected",
+                    new { roomId, error = "Không có yêu cầu đổi bên nào đang chờ trả lời." });
+                return;
+            }
+
+            await Clients.Group(GetRoomGroupName(roomId)).SendAsync("SideSwapResolved", new
+            {
+                roomId,
+                accepted = accept,
+                byUserId = userId
+            });
+
+            await NotifyParticipantsChangedAsync(roomId);
+            await BroadcastRoomStateAsync(roomId);
+        }
+
+        // =========================================
+        // Xin hoà
+        // =========================================
+
+        /// <summary>
+        /// Xin hoà: ghi nhận và mở hạn 30 giây cho đối thủ (đặc tả 3.3). Đồng hồ nền tự
+        /// huỷ nếu đối thủ không trả lời, nên client không cần báo hết hạn.
+        /// </summary>
+        public async Task OfferDraw(int matchId)
+        {
+            int userId = CurrentUserIdOrThrow;
+
+            var result = await _matchService.OfferDrawAsync(matchId, userId);
+
+            if (!result.Success)
+            {
+                await Clients.Caller.SendAsync("MoveRejected", new { matchId, error = result.Error });
+                return;
+            }
+
+            var me = await _db.Users.AsNoTracking()
+                .FirstOrDefaultAsync(u => u.Id == userId);
+
+            await Clients.Group(GetMatchGroupName(matchId)).SendAsync("DrawOffered", new
+            {
+                matchId,
+                fromUserId = userId,
+                displayName = me?.DisplayName ?? "Người chơi",
+                secondsLeft = MatchService.DrawResponseSeconds
+            });
+        }
+
+        /// <summary>
+        /// Trả lời đề nghị hoà. Đồng ý thì ván kết thúc ngay với lý do AgreedDraw và cả
+        /// ván nhận MatchUpdated; từ chối thì chỉ huỷ đề nghị, ván đi tiếp.
+        /// </summary>
+        public async Task RespondDraw(int matchId, bool accept)
+        {
+            int userId = CurrentUserIdOrThrow;
+
+            if (!accept)
+            {
+                if (!await _matchService.RejectDrawAsync(matchId, userId))
+                {
+                    await Clients.Caller.SendAsync("MoveRejected",
+                        new { matchId, error = "Không có đề nghị hoà nào đang chờ trả lời." });
+                    return;
+                }
+
+                await Clients.Group(GetMatchGroupName(matchId))
+                    .SendAsync("DrawOfferResolved", new { matchId, accepted = false, byUserId = userId });
+                return;
+            }
+
+            var reason = await _matchService.AcceptDrawAsync(matchId, userId);
+
+            if (reason == MatchEndReason.None)
+            {
+                await Clients.Caller.SendAsync("MoveRejected",
+                    new { matchId, error = "Không có đề nghị hoà nào đang chờ trả lời." });
+                return;
+            }
+
+            await Clients.Group(GetMatchGroupName(matchId))
+                .SendAsync("DrawOfferResolved", new { matchId, accepted = true, byUserId = userId });
+
+            await BroadcastMatchUpdatedAsync(matchId);
+        }
+
+        // =========================================
+        // Tái đấu
+        // =========================================
+
+        /// <summary>
+        /// Bấm "Tái đấu" sau khi ván xong (đặc tả R14). Chỉ khi CẢ HAI cùng bấm mới tạo
+        /// ván mới, và ván mới tự động đổi bên Đỏ <-> Đen.
+        /// </summary>
+        public async Task RequestRematch(int matchId)
+        {
+            int userId = CurrentUserIdOrThrow;
+
+            var previous = await _db.Matches.AsNoTracking()
+                .FirstOrDefaultAsync(m => m.Id == matchId);
+
+            if (previous == null)
+            {
+                await Clients.Caller.SendAsync("MoveRejected",
+                    new { matchId, error = "Không tìm thấy ván đấu." });
+                return;
+            }
+
+            if (!MatchService.CanRematch(previous))
+            {
+                await Clients.Caller.SendAsync("MoveRejected",
+                    new { matchId, error = "Đã quá thời gian cho phép tái đấu." });
+                return;
+            }
+
+            var newMatch = await _matchService.RequestRematchAsync(matchId, userId);
+
+            if (newMatch == null)
+            {
+                await Clients.Group(GetMatchGroupName(matchId))
+                    .SendAsync("RematchPending", new { matchId, byUserId = userId });
+                return;
+            }
+
+            await AnnounceRematchAsync(previous, newMatch);
+        }
+
+        /// <summary>
+        /// Ván tái đấu đã tạo: đưa cả hai đấu thủ vào group ván mới và báo phòng chuyển
+        /// sang phòng thi đấu. Ghế đã đảo nên không báo lại danh sách ghế phòng chờ.
+        /// </summary>
+        private async Task AnnounceRematchAsync(Match previous, Match next)
+        {
+            foreach (int userId in new[] { next.RedUserId, next.BlackUserId })
+            {
+                if (userId == 0)
+                {
+                    continue;
+                }
+
+                foreach (string connectionId in await _db.RoomParticipants
+                    .Where(p => p.RoomId == next.RoomId && p.UserId == userId)
+                    .Select(p => p.ConnectionId)
+                    .ToListAsync())
+                {
+                    if (!string.IsNullOrEmpty(connectionId))
+                    {
+                        await Groups.AddToGroupAsync(connectionId, GetMatchGroupName(next.Id));
+                    }
+                }
+            }
+
+            var room = await _db.Rooms.FirstOrDefaultAsync(r => r.Id == next.RoomId);
+
+            if (room != null)
+            {
+                room.ActiveMatchId = next.Id;
+                room.Status = RoomStatus.Playing;
+                await _db.SaveChangesAsync();
+            }
+
+            await Clients.Group(GetRoomGroupName(next.RoomId)).SendAsync("MatchStarted", new
+            {
+                matchId = next.Id,
+                previousMatchId = previous.Id,
+                fen = next.Fen,
+                turnSide = next.TurnSide,
+                redUserId = next.RedUserId,
+                blackUserId = next.BlackUserId,
+                isRematch = true
+            });
+        }
+
+        /// <summary>
         /// Gọi từ server (controller qua IHubContext) khi cả hai vừa bấm sẵn sàng.
         /// Không kiểm tra lại điều kiện vì điều kiện đã do SetReady đảm bảo.
         /// </summary>
@@ -746,8 +1191,16 @@ namespace _23DTHD6_DemoBanCo.Hubs
         // Mời bạn
         // =========================================
 
-        /// <summary>Sinh link mời có token để người nhận vào đúng phòng này.</summary>
-        public async Task<string> RequestJoinInvite(string roomCode)
+        /// <summary>
+        /// Trả về thông tin chia sẻ phòng để giao diện dựng link mời, mã phòng và mã QR
+        /// (đặc tả 2.2). Không gửi tín hiệu cho ai cả — chỉ trả về cho người gọi.
+        ///
+        /// Hàm cũ từng sinh token ngẫu nhiên rồi phát cho CẢ PHÒNG, khiến mọi người
+        /// trong phòng đều nhận lời mời. Đặc tả 2.5 đã chuyển việc mời bạn bè sang
+        /// SocialHub với đúng 2 người liên quan, nên phần này chỉ còn phát sinh dữ liệu
+        /// để dựng mã QR.
+        /// </summary>
+        public async Task<object?> GetShareInfo(string roomCode)
         {
             int userId = CurrentUserIdOrThrow;
 
@@ -755,47 +1208,17 @@ namespace _23DTHD6_DemoBanCo.Hubs
 
             if (room == null)
             {
-                return "";
+                return null;
             }
 
-            var user = await _db.Users.AsNoTracking()
-                .FirstOrDefaultAsync(u => u.Id == userId);
-
-            string token = Guid.NewGuid().ToString("N");
-            await Clients.Group(GetRoomGroupName(room.Id)).SendAsync("JoinInviteReceived", new
+            return new
             {
                 roomId = room.Id,
+                roomCode = room.Code,
                 roomName = room.Name,
-                fromUserId = userId,
-                displayName = user?.DisplayName ?? "Người chơi",
-                token
-            });
-
-            return $"{room.Code}:{token}";
-        }
-
-        public async Task<bool> ResponseJoinInvite(string fromUserId, bool accept)
-        {
-            int userId = CurrentUserIdOrThrow;
-
-            if (!accept)
-            {
-                await Clients.User(fromUserId).SendAsync("JoinInviteResolved", new
-                {
-                    fromUserId = userId,
-                    accepted = false
-                });
-
-                return false;
-            }
-
-            await Clients.User(fromUserId).SendAsync("JoinInviteResolved", new
-            {
-                fromUserId = userId,
-                accepted = true
-            });
-
-            return true;
+                isOwner = room.OwnerId == userId,
+                qrUrl = $"/Room/QrCode?roomId={room.Id}&scope=join"
+            };
         }
 
         // =========================================
@@ -871,6 +1294,17 @@ namespace _23DTHD6_DemoBanCo.Hubs
         /// <summary>Tên group của ván: "match:{matchId}".</summary>
         public static string GetMatchGroupName(int matchId) => $"match:{matchId}";
 
+
+        /// <summary>
+        /// Số giây còn lại tới một mốc thời gian, không bao giờ âm.
+        /// Client đếm ngược theo số này nên server là nguồn chân lý; làm tròn lên để
+        /// không bao giờ hiện 0 giây khi thực tế còn dư chút ít.
+        /// </summary>
+        private static double SecondsUntil(DateTime targetUtc, DateTime nowUtc)
+        {
+            double seconds = (targetUtc - nowUtc).TotalSeconds;
+            return seconds <= 0 ? 0 : seconds;
+        }
         // Tên group: phòng "room:{id}", ván "match:{id}".
 
         private static string? NormalizeSide(string? side)

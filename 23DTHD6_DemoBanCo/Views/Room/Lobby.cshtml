@@ -1,13 +1,23 @@
 @using _23DTHD6_DemoBanCo.Models
-
 @{
-    // Sảnh: chọn chế độ chơi, tạo phòng, vào phòng theo mã, xem các phòng đang mở.
-    var publicRooms = (List<Room>)ViewBag.PublicRooms;
-    var myRooms = (List<Room>)ViewBag.MyRooms;
+    // Sảnh: ba chế độ chơi rõ rệt (đặc tả 2.0).
+    //   1. ĐÁNH THƯỜNG - ghép ngẫu nhiên, tạo phòng, danh sách phòng công khai.
+    //   2. ĐÁNH HẠNG   - hàng đợi Elo, cấm xem, cấm undo, cấm khách.
+    //   3. ĐÁNH VỚI MÁY - 3 cấp độ, chọn phe Đỏ/Đen/Ngẫu nhiên.
+    var publicRooms = (List<Room>?)ViewBag.PublicRooms;
+    var myRooms = (List<Room>?)ViewBag.MyRooms;
     var myElo = (int)ViewBag.MyElo;
     var myTierName = (string)ViewBag.MyTierName;
     var myWins = (int)ViewBag.MyWins;
     var myLosses = (int)ViewBag.MyLosses;
+    var isGuest = (bool)ViewBag.IsGuest;
+    var casualQueueSize = (int)ViewBag.CasualQueueSize;
+    var rankedQueueSize = (int)ViewBag.RankedQueueSize;
+    var capacity = (int)ViewBag.Capacity;
+
+    // Người chơi đang chờ trong hàng đợi sẽ thấy nút "Hủy tìm trận" ở đúng chế độ đó.
+    int casualWaiting = casualQueueSize > 1 ? casualQueueSize - 1 : 0;
+    int rankedWaiting = rankedQueueSize > 1 ? rankedQueueSize - 1 : 0;
 }
 
 <!DOCTYPE html>
@@ -15,29 +25,38 @@
 <head>
     <meta charset="utf-8" />
     <title>Sảnh - Cờ Tướng Online</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/microsoft-signalr/8.0.7/signalr.min.js"></script>
     <style>
         body { font-family: system-ui, -apple-system, "Segoe UI", sans-serif; margin: 0; background: #f4f5f7; color: #222; }
-        .wrap { max-width: 980px; margin: 0 auto; padding: 24px 16px 60px; }
+        .wrap { max-width: 1040px; margin: 0 auto; padding: 24px 16px 60px; }
         h1 { font-size: 24px; margin: 0 0 4px; }
         .sub { color: #666; font-size: 14px; margin-bottom: 20px; }
         .topbar { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; }
         .elo-box { background: #fff; border: 1px solid #ddd; border-radius: 8px; padding: 8px 14px; font-size: 14px; }
         .elo-box strong { color: #1a73e8; }
+
         .tabs { display: flex; gap: 8px; margin: 20px 0 16px; flex-wrap: wrap; }
-        .tab { padding: 10px 18px; border-radius: 8px; background: #fff; border: 1px solid #ddd; cursor: pointer; font-size: 15px; font-weight: 600; }
+        .tab { padding: 12px 20px; border-radius: 8px; background: #fff; border: 1px solid #ddd; cursor: pointer; font-size: 15px; font-weight: 600; }
         .tab.active { background: #1a73e8; color: #fff; border-color: #1a73e8; }
-        .panel { display: none; background: #fff; border: 1px solid #ddd; border-radius: 10px; padding: 18px; }
+        .panel { display: none; background: #fff; border: 1px solid #ddd; border-radius: 10px; padding: 20px; }
         .panel.active { display: block; }
         h2 { font-size: 18px; margin: 0 0 12px; }
-        h3 { font-size: 15px; margin: 18px 0 8px; }
+        h3 { font-size: 15px; margin: 20px 0 8px; }
         label { display: block; font-size: 14px; margin-bottom: 4px; color: #444; }
-        input[type=text] { padding: 9px 10px; border: 1px solid #ccc; border-radius: 6px; width: 100%; max-width: 320px; font-size: 15px; }
+        input[type=text] { padding: 9px 10px; border: 1px solid #ccc; border-radius: 6px; width: 100%; max-width: 320px; font-size: 15px; box-sizing: border-box; }
         button { padding: 9px 16px; border: none; border-radius: 6px; background: #1a73e8; color: #fff; cursor: pointer; font-size: 14px; font-weight: 600; }
         button:hover { background: #1558b0; }
         button.secondary { background: #fff; color: #333; border: 1px solid #ccc; }
         button.secondary:hover { background: #f0f0f0; }
+        button.danger { background: #d93025; }
+        button.danger:hover { background: #b3251c; }
+        button:disabled { opacity: .5; cursor: not-allowed; }
         .row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin-top: 10px; }
-        .note { font-size: 13px; color: #777; margin-top: 8px; }
+        .note { font-size: 13px; color: #777; margin-top: 8px; line-height: 1.6; }
+        .warn { background: #fff8e1; border: 1px solid #ffe082; border-radius: 8px; padding: 10px 12px; font-size: 13px; color: #7a5900; margin-top: 12px; }
+        .alert { background: #fdecea; border: 1px solid #f5c6c2; color: #c5221f; padding: 10px 12px; border-radius: 8px; margin-bottom: 14px; font-size: 14px; }
+        .info { background: #e8f0fe; border: 1px solid #c6dafc; color: #174ea6; padding: 10px 12px; border-radius: 8px; margin-bottom: 14px; font-size: 14px; }
+
         .room-list { list-style: none; padding: 0; margin: 10px 0 0; }
         .room-list li { border: 1px solid #e2e2e2; border-radius: 8px; padding: 10px 12px; margin-bottom: 8px; display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; }
         .room-name { font-weight: 600; }
@@ -45,6 +64,20 @@
         .code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 15px; letter-spacing: 1px; }
         .empty { color: #888; font-size: 14px; padding: 12px 0; }
         .side-group { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
+        .side-group button.selected { background: #188038; border-color: #188038; color: #fff; }
+
+        /* Hàng đợi: một khối bao quanh số người đang chờ */
+        .queue-box { border: 2px dashed #1a73e8; border-radius: 10px; padding: 16px; text-align: center; background: #f5f9ff; }
+        .queue-box.searching { animation: pulse 1.4s ease-in-out infinite; }
+        @@keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: .55; } }
+        .queue-count { font-size: 15px; font-weight: 600; color: #174ea6; }
+
+        /* Khối chọn cấp độ máy */
+        .level-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; margin-top: 12px; }
+        .level-card { border: 2px solid #e2e2e2; border-radius: 10px; padding: 14px; text-align: center; cursor: pointer; }
+        .level-card.selected { border-color: #188038; background: #f0fdf4; }
+        .level-name { font-size: 16px; font-weight: 700; }
+        .level-desc { font-size: 12px; color: #777; margin-top: 4px; }
     </style>
 </head>
 <body>
@@ -61,21 +94,51 @@
             </div>
         </div>
 
+        @if (TempData["ErrorMessage"] != null)
+        {
+            <div class="alert" style="margin-top:16px;">@TempData["ErrorMessage"]</div>
+        }
+
+        @* Khách không được tính Elo nên UI cần biết để bỏ nút xếp hạng thay vì
+           bấm xong mới bị từ chối. Đặc tả 1.3 và EC-01. *@
+        @if (isGuest)
+        {
+            <div class="warn">
+                ⚠️ Bạn đang chơi ở chế độ <strong>Khách</strong>: không tính điểm Elo, không
+                lưu lịch sử ván cờ, và <strong>không được tham gia Xếp hạng</strong>.
+                Muốn leo thứ hạng, hãy <a asp-controller="Account" asp-action="Register">đăng ký tài khoản</a>.
+            </div>
+        }
+
         <div class="tabs">
             <div class="tab active" data-tab="casual">Đánh thường</div>
             <div class="tab" data-tab="ranked">Đánh hạng</div>
             <div class="tab" data-tab="ai">Đánh với máy</div>
         </div>
 
-        <!-- ============ 1. ĐÁNH THƯỜNG ============ -->
+        <!-- ================================================================
+             1. ĐÁNH THƯỜNG (Casual)
+             ================================================================ -->
         <div class="panel active" id="panel-casual">
             <h2>Đánh thường</h2>
-            <p class="note">Chơi tự do, có thể mời bạn bè và cho khán giả xem.</p>
+            <p class="note">Giao lưu, tập luyện và giải trí. Không tính điểm Elo.</p>
 
-            <div class="row">
-                <button type="button">Ghép ngẫu nhiên</button>
+            <h3>Ghép trận ngẫu nhiên</h3>
+            <div class="queue-box" id="casualQueueBox">
+                <div class="queue-count" id="casualQueueText">
+                    @if (casualWaiting > 0)
+                    {
+                        <span>Có @casualWaiting người đang chờ ghép cùng bạn</span>
+                    }
+                    else
+                    {
+                        <span>Chưa có ai đang chờ. Bấm nút để bắt đầu tìm đối thủ.</span>
+                    }
+                </div>
+                <div class="row" style="justify-content:center;">
+                    <button type="button" id="btnCasualQueue">Ghép ngẫu nhiên</button>
+                </div>
             </div>
-            <div class="note">Chưa có hàng đợi chờ người chơi ở bản demo này.</div>
 
             <h3>Tạo phòng thi đấu</h3>
             <form asp-controller="Room" asp-action="Create" method="post">
@@ -89,7 +152,7 @@
 
             <h3>Vào phòng bằng mã</h3>
             <form asp-controller="Room" asp-action="JoinByCode" method="get">
-                <label for="joinCode">Mã phòng (6 hoặc 8 ký tự)</label>
+                <label for="joinCode">Mã phòng (8 ký tự)</label>
                 <input type="text" id="joinCode" name="code" placeholder="ABCD2345" maxlength="8" />
                 <div class="row">
                     <button type="submit">Vào phòng</button>
@@ -110,16 +173,18 @@
                                     @mine.Visibility &middot; @mine.Status
                                 </div>
                             </div>
-                            <a asp-controller="Room" asp-action="Waiting" asp-route-id="@mine.Id">Vào phòng</a>
+                            <a class="btn btn-outline-primary" asp-controller="Room" asp-action="Waiting" asp-route-id="@mine.Id">Vào phòng</a>
                         </li>
                     }
                 </ul>
             }
 
+            @* Đặc tả 2.0: CHỈ phòng PUBLIC mới hiện ở đây. CODE_ONLY / LOCKED tuyệt đối
+               không xuất hiện. GetPublicRoomsAsync đã lọc sẵn ở server. *@
             <h3>Phòng đang mở</h3>
             @if (publicRooms == null || publicRooms.Count == 0)
             {
-                <div class="empty">Chưa có phòng nào đang mở. Hãy tạo một phòng trước nhé.</div>
+                <div class="empty">Chưa có phòng công khai nào đang mở. Hãy tạo một phòng trước nhé.</div>
             }
             else
             {
@@ -134,58 +199,123 @@
                                 <div class="room-meta">
                                     Chủ phòng: @(room.Owner?.DisplayName ?? "Không rõ")
                                     &middot; Mã <span class="code">@room.Code</span>
-                                    &middot; @players/2 đấu thủ, @spectators/@((int)ViewBag.Capacity - 2) khán giả
+                                    &middot; @players/2 đấu thủ, @spectators/@(capacity - 2) khán giả
                                 </div>
                             </div>
-                            <a asp-controller="Room" asp-action="JoinByCode" asp-route-code="@room.Code">Vào phòng</a>
+                            <a class="btn btn-outline-primary" asp-controller="Room" asp-action="JoinByCode" asp-route-code="@room.Code">Vào phòng</a>
                         </li>
                     }
                 </ul>
             }
         </div>
 
-        <!-- ============ 2. ĐÁNH HẠNG ============ -->
+        <!-- ================================================================
+             2. ĐÁNH HẠNG (Ranked) - ghép ngẫu nhiên 100%, cấm xem, cấm undo
+             ================================================================ -->
         <div class="panel" id="panel-ranked">
             <h2>Đánh hạng</h2>
-            <div class="row">
-                <button type="button">Tìm trận Xếp hạng</button>
-            </div>
-            <div class="note">Chưa có hàng đợi xếp hạng ở bản demo này.</div>
+            <p class="note">Ghép trận ngẫu nhiên 100% theo điểm Elo. Không mời bạn, không có người xem.</p>
+
+            @if (isGuest)
+            {
+                @* Đặc tả EC-01: chỉ tài khoản chính thức được bấm nút này. Bỏ hẳn nút
+                   thay vì để bấm rồi mới nhận lỗi. *@
+                <div class="warn">
+                    ⚠️ Chế độ Khách không được tham gia Đánh hạng. Vui lòng
+                    <a asp-controller="Account" asp-action="Register">đăng ký tài khoản</a>
+                    để tính điểm Elo và leo thứ hạng.
+                </div>
+            }
+            else
+            {
+                <div class="queue-box" id="rankedQueueBox">
+                    <div class="queue-count" id="rankedQueueText">
+                        @if (rankedWaiting > 0)
+                        {
+                            <span>Có @rankedWaiting người đang chờ ghép cùng bạn</span>
+                        }
+                        else
+                        {
+                            <span>Chưa có ai đang chờ. Bấm nút để bắt đầu tìm đối thủ.</span>
+                        }
+                    </div>
+                    <div class="row" style="justify-content:center;">
+                        <button type="button" id="btnRankedQueue">Tìm trận Xếp hạng</button>
+                    </div>
+                </div>
+            }
+
+            <h3>Luật chế độ này</h3>
+            <ul class="note" style="padding-left:20px;">
+                <li>Thời gian cố định <strong>10 phút mỗi bên</strong> (Rapid), không cộng giây.</li>
+                <li>Ghép ngẫu nhiên theo Elo, biên ban đầu ±100 điểm, mỗi 10 giây mở rộng thêm ±50.</li>
+                <li><strong>Tuyệt đối không có khán giả</strong> — không ai xem được ván xếp hạng.</li>
+                <li><strong>Cấm xin đi lại</strong> hoàn toàn.</li>
+                <li>Mất kết nối quá 60 giây thì xử thua và bị trừ Elo.</li>
+                <li>Đầu hàng vẫn bị xử thua và trừ Elo như bình thường.</li>
+            </ul>
             <p class="note">
-                Luật chế độ này: không thể mời bạn, không cho khán giả xem, không đi lại nước.
-                Điểm Elo của bạn là <strong>@myElo</strong> (bậc @myTierName).
+                Điểm Elo hiện tại của bạn: <strong>@myElo</strong> (bậc @myTierName).
             </p>
         </div>
 
-        <!-- ============ 3. ĐÁNH VỚI MÁY ============ -->
+        <!-- ================================================================
+             3. ĐÁNH VỚI MÁY (AI)
+             ================================================================ -->
         <div class="panel" id="panel-ai">
             <h2>Đánh với máy</h2>
-            <p class="note">Chưa có bộ máy cờ trong bản demo này.</p>
+            <p class="note">
+                Rèn luyện kỹ nghệ đơn phương. Không giới hạn thời gian, cho phép đi lại tối đa
+                3 lượt (mỗi lượt lùi trọn 1 cặp nước đi), và toàn bộ ván được lưu vào lịch sử
+                để xem lại.
+            </p>
 
             <h3>Cấp độ máy</h3>
-            <div class="row">
-                <button type="button" class="secondary">Dễ</button>
-                <button type="button" class="secondary">Trung bình</button>
-                <button type="button" class="secondary">Khó</button>
+            <div class="level-grid">
+                <div class="level-card selected" data-level="easy" data-depth="2" data-budget="300">
+                    <div class="level-name">Dễ</div>
+                    <div class="level-desc">Tìm sâu 2 nước · phản hồi ≤ 300 ms</div>
+                </div>
+                <div class="level-card" data-level="medium" data-depth="4" data-budget="1000">
+                    <div class="level-name">Trung bình</div>
+                    <div class="level-desc">Tìm sâu 4 nước · phản hồi ≤ 1000 ms</div>
+                </div>
+                <div class="level-card" data-level="hard" data-depth="6" data-budget="3000">
+                    <div class="level-name">Khó</div>
+                    <div class="level-desc">Tìm sâu 6 nước · phản hồi ≤ 3000 ms</div>
+                </div>
             </div>
 
             <h3>Bạn cầm phe nào</h3>
-            <div class="side-group">
-                <button type="button" class="secondary">Đỏ</button>
-                <button type="button" class="secondary">Đen</button>
-                <button type="button" class="secondary">Ngẫu nhiên</button>
+            <div class="side-group" id="sideGroup">
+                <button type="button" class="selected" data-side="red">🔴 Cầm Đỏ (đi trước)</button>
+                <button type="button" data-side="black">⚫ Cầm Đen (đi sau)</button>
+                <button type="button" data-side="random">🎲 Ngẫu nhiên 50/50</button>
             </div>
+
+            <div class="row">
+                <button type="button" id="btnStartAi">Vào ván với máy</button>
+            </div>
+            <p class="note">
+                Cầm Đen nghĩa là máy sẽ đi nước khai cuộc trước, bàn cờ được lật để bạn ngồi dưới.
+            </p>
         </div>
 
-        <p class="note">
+        <p class="note" style="margin-top:22px;">
             <a asp-controller="Home" asp-action="Index">Về trang chủ</a> &middot;
-            <a asp-controller="Home" asp-action="Privacy">Giới thiệu</a>
+            <a asp-controller="Profile" asp-action="Leaderboard">Bảng xếp hạng</a> &middot;
+            <a asp-controller="Profile" asp-action="History">Lịch sử ván đấu</a>
         </p>
 
     </div>
 
     <script>
-        // Chuyển khu vực: chỉ dùng class, không cần thư viện ngoài.
+        /* ================================================================
+           HÀNG ĐỢI GHÉP TRẬN
+           Một connection duy nhất cho cả trang, mở khi vào tab xếp hạng/tự do.
+           Người dùng có thể bấm "Hủy tìm trận" bất kỳ lúc nào CHƯA tìm thấy đối thủ;
+           khi đã MATCH_FOUND thì nút bị khoá (đặc tả 7.1).
+           ================================================================ */
         (function () {
             const tabs = document.querySelectorAll('.tab');
             const panels = document.querySelectorAll('.panel');
@@ -193,15 +323,130 @@
             tabs.forEach(function (tab) {
                 tab.addEventListener('click', function () {
                     const name = tab.getAttribute('data-tab');
-
                     tabs.forEach(function (t) { t.classList.remove('active'); });
                     panels.forEach(function (p) { p.classList.remove('active'); });
-
                     tab.classList.add('active');
                     const panel = document.getElementById('panel-' + name);
                     if (panel) { panel.classList.add('active'); }
                 });
             });
+
+            /* ---- Chọn cấp độ và phe ---- */
+            let chosenLevel = 'easy';
+            let chosenSide = 'red';
+
+            document.querySelectorAll('.level-card').forEach(function (card) {
+                card.addEventListener('click', function () {
+                    document.querySelectorAll('.level-card').forEach(function (c) {
+                        c.classList.remove('selected');
+                    });
+                    card.classList.add('selected');
+                    chosenLevel = card.getAttribute('data-level');
+                });
+            });
+
+            document.querySelectorAll('#sideGroup button').forEach(function (btn) {
+                btn.addEventListener('click', function () {
+                    document.querySelectorAll('#sideGroup button').forEach(function (b) {
+                        b.classList.remove('selected');
+                    });
+                    btn.classList.add('selected');
+                    chosenSide = btn.getAttribute('data-side');
+                });
+            });
+
+            /* ---- Bàn cờ và âm thanh dùng lại đúng module của phòng chờ ---- */
+            const connection = new signalR.HubConnectionBuilder()
+                .withUrl('/matchmakingHub')
+                .withAutomaticReconnect()
+                .build();
+
+            let started = false;
+            const ready = connection.start().then(function () { started = true; });
+
+            function setSearching(kind, searching) {
+                const box = document.getElementById(kind + 'QueueBox');
+                const btn = document.getElementById('btn' + kind.charAt(0).toUpperCase() + kind.slice(1) + 'Queue');
+                if (box) box.classList.toggle('searching', searching);
+                if (btn) {
+                    btn.textContent = searching ? 'Hủy tìm trận' : (kind === 'casual' ? 'Ghép ngẫu nhiên' : 'Tìm trận Xếp hạng');
+                }
+            }
+
+            function bindQueue(kind, btnId) {
+                const btn = document.getElementById(btnId);
+                if (!btn) return;
+
+                let searching = false;
+
+                btn.addEventListener('click', function () {
+                    ready.then(function () {
+                        if (searching) {
+                            connection.invoke('LeaveQueue');
+                            searching = false;
+                            setSearching(kind, false);
+                            return;
+                        }
+                        connection.invoke('JoinQueue', kind, connection.connectionId);
+                        searching = true;
+                        setSearching(kind, true);
+                    });
+                });
+            }
+
+            bindQueue('casual', 'btnCasualQueue');
+            bindQueue('ranked', 'btnRankedQueue');
+
+            /* ---- Hub báo kết quả ---- */
+            connection.on('Queued', function (p) {
+                setSearching(p.kind === 'xếp hạng' ? 'ranked' : 'casual', true);
+                const kind = p.kind === 'xếp hạng' ? 'rankedQueueText' : 'casualQueueText';
+                const el = document.getElementById(kind);
+                if (el) el.textContent = p.message;
+            });
+
+            connection.on('QueueCancelled', function (p) {
+                setSearching(p.kind === 'xếp hạng' ? 'ranked' : 'casual', false);
+            });
+
+            connection.on('QueueRejected', function (p) {
+                setSearching('casual', false);
+                setSearching('ranked', false);
+                window.alert(p.error);
+            });
+
+            /* MATCH_FOUND: nút Hủy bị khoá vĩnh viễn, cả hai vào thẳng phòng. */
+            connection.on('Matched', function (p) {
+                setSearching('casual', false);
+                setSearching('ranked', false);
+                window.location.href = '/Room/Waiting/' + p.roomId;
+            });
+
+            /* ---- Ván với máy: hub riêng /aiHub ---- */
+            const aiBtn = document.getElementById('btnStartAi');
+            if (aiBtn) {
+                aiBtn.addEventListener('click', function () {
+                    aiBtn.disabled = true;
+                    aiBtn.textContent = 'Đang tạo ván...';
+
+                    const ai = new signalR.HubConnectionBuilder()
+                        .withUrl('/aiHub')
+                        .build();
+
+                    ai.start()
+                        .then(function () {
+                            return ai.invoke('StartMatch', chosenLevel, chosenSide);
+                        })
+                        .then(function (matchId) {
+                            window.location.href = '/Room/AiGame/' + matchId;
+                        })
+                        .catch(function (err) {
+                            window.alert('Không tạo được ván với máy: ' + err);
+                            aiBtn.disabled = false;
+                            aiBtn.textContent = 'Vào ván với máy';
+                        });
+                });
+            }
         })();
     </script>
 </body>

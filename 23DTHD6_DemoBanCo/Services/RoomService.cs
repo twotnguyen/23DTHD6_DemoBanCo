@@ -23,6 +23,9 @@ namespace _23DTHD6_DemoBanCo.Services
         public const string SideRed = "do";
         public const string SideBlack = "den";
 
+        /// <summary>Thời hạn chờ đối thủ đồng ý đổi bên (đặc tả 2.3).</summary>
+        public const int SideSwapResponseSeconds = 30;
+
         private static readonly string[] Sides = { SideRed, SideBlack };
 
         public RoomService(AppDbContext db)
@@ -116,14 +119,18 @@ namespace _23DTHD6_DemoBanCo.Services
                 .ToListAsync();
         }
 
-        /// <summary>Chỉ trả phòng công khai, phòng hoạt động gần nhất lên đầu.</summary>
+        /// <summary>
+        /// Chỉ trả phòng còn mở và công khai. Phòng CODE_ONLY / LOCKED / CLOSED đều không
+        /// xuất hiện ở sảnh (đặc tả 2.0), kể cả phòng xếp hạng vốn luôn bị khoá.
+        /// </summary>
         public async Task<List<Room>> GetPublicRoomsAsync()
         {
             return await _db.Rooms
                 .AsNoTracking()
                 .Include(r => r.Owner)
                 .Include(r => r.Participants).ThenInclude(p => p.User)
-                .Where(r => r.Visibility == RoomVisibility.Public)
+                .Where(r => r.Visibility == RoomVisibility.Public
+                    && r.Status != RoomStatus.Closed)
                 .OrderByDescending(r => r.LastActivityAt ?? r.CreatedAt)
                 .ToListAsync();
         }
@@ -243,7 +250,7 @@ namespace _23DTHD6_DemoBanCo.Services
         /// <summary>Chuyển người chơi sang ghế còn trống, chỉ khi phòng chưa đủ hai đấu thủ.</summary>
         public async Task<bool> SwitchSideAsync(int roomId, int userId, string side)
         {
-            string normalized = NormalizeSide(side);
+            string? normalized = NormalizeSide(side);
             if (normalized == null)
                 return false;
 
@@ -272,6 +279,289 @@ namespace _23DTHD6_DemoBanCo.Services
             await _db.SaveChangesAsync();
 
             return true;
+        }
+
+        /// <summary>
+        /// Phòng còn mở để người khác vào không. Phòng đã Closed là vĩnh viễn theo vòng
+        /// đời của nó, nên link/mã/QR cũ cũng vô hiệu luôn — khác với Locked chỉ khoá tạm.
+        /// </summary>
+        public static bool IsOpen(Room room)
+            => room.Status != RoomStatus.Closed;
+
+        /// <summary>
+        /// Đóng phòng vĩnh viễn: không còn ai vào được, và danh sách chặn của phòng cũng
+        /// hết hiệu lực vì phòng đã kết thúc chu kỳ sống (đặc tả 4.2).
+        /// </summary>
+        public async Task CloseRoomAsync(int roomId)
+        {
+            var room = await _db.Rooms.FirstOrDefaultAsync(r => r.Id == roomId);
+
+            if (room == null || room.Status == RoomStatus.Closed)
+            {
+                return;
+            }
+
+            room.Status = RoomStatus.Closed;
+            room.ClosedAt = DateTime.UtcNow;
+            room.ActiveMatchId = null;
+            room.IsStartingMatch = false;
+
+            // Phòng đã đóng thì danh sách chặn không còn ý nghĩa: giữ lại chỉ làm bảng
+            // phình to mà không ai đọc nữa.
+            await _db.RoomBlocks.Where(b => b.RoomId == roomId).ExecuteDeleteAsync();
+
+            await _db.SaveChangesAsync();
+        }
+
+        /// <summary>
+        /// Người cuối cùng rời phòng thì phòng đóng. Trả về true nếu vừa đóng phòng,
+        /// để caller biết có cần phát thông báo cho các client còn treo hay không.
+        ///
+        /// Quy tắc (đặc tả 2.3): chỉ đóng khi phòng KHÔNG còn đấu thủ nào. Nếu còn
+        /// khán giả thì giữ phòng mở, vì họ có thể vào xem và mời thêm người.
+        /// </summary>
+        public async Task<bool> CloseIfNoPlayersLeftAsync(int roomId)
+        {
+            int playersLeft = await _db.RoomParticipants
+                .CountAsync(p => p.RoomId == roomId && p.Role == ParticipantRole.Player);
+
+            if (playersLeft > 0)
+            {
+                return false;
+            }
+
+            await CloseRoomAsync(roomId);
+            return true;
+        }
+
+        /// <summary>
+        /// Chủ phòng rời đi thì nhượng quyền cho người còn lại (đặc tả 2.3).
+        /// Ưu tiên đấu thủ còn ngồi ghế trước, khán giả chỉ kế nhiệm khi không còn ai đánh.
+        /// Trả về true nếu đã có người nhận quyền.
+        /// </summary>
+        public async Task<bool> TransferHostIfOwnerLeftAsync(int roomId, int leavingUserId)
+        {
+            var room = await _db.Rooms.FirstOrDefaultAsync(r => r.Id == roomId);
+
+            if (room == null || room.OwnerId != leavingUserId)
+            {
+                return false;
+            }
+
+            var heir = await _db.RoomParticipants
+                .Where(p => p.RoomId == roomId && p.UserId != leavingUserId)
+                .OrderBy(p => p.Role == ParticipantRole.Player ? 0 : 1)
+                .ThenBy(p => p.JoinedAt)
+                .FirstOrDefaultAsync();
+
+            if (heir == null)
+            {
+                return false;
+            }
+
+            room.OwnerId = heir.UserId;
+            room.LastActivityAt = DateTime.UtcNow;
+            await _db.SaveChangesAsync();
+
+            return true;
+        }
+
+        /// <summary>
+        /// Đề nghị đổi bên khi đã đủ hai đấu thủ: chỉ ghi nhận và mở hạn 30 giây cho đối thủ.
+        /// Trả về (thành công, thông điệp lỗi).
+        /// </summary>
+        public async Task<(bool ok, string? error)> RequestSideSwapAsync(int roomId, int userId)
+        {
+            var room = await _db.Rooms.FirstOrDefaultAsync(r => r.Id == roomId);
+
+            if (room == null || room.Status == RoomStatus.Closed)
+            {
+                return (false, "Phòng không còn hoạt động.");
+            }
+
+            var players = await _db.RoomParticipants
+                .Where(p => p.RoomId == roomId && p.Role == ParticipantRole.Player)
+                .ToListAsync();
+
+            if (players.Count < 2)
+            {
+                return (false, "Chỉ có thể xin đổi bên khi phòng đã đủ hai đấu thủ.");
+            }
+
+            if (players.All(p => p.UserId != userId))
+            {
+                return (false, "Bạn không tham gia ván này.");
+            }
+
+            if (room.SideSwapRequestedBy == userId)
+            {
+                return (false, "Bạn đang chờ đối thủ trả lời yêu cầu đổi bên.");
+            }
+
+            room.SideSwapRequestedBy = userId;
+            room.SideSwapExpiresAt = DateTime.UtcNow.AddSeconds(SideSwapResponseSeconds);
+            await _db.SaveChangesAsync();
+
+            return (true, null);
+        }
+
+        /// <summary>
+        /// Từ chối đề nghị đổi bên: huỷ, không đổi ghế.
+        /// Trả về false nếu không có đề nghị nào đang chờ.
+        /// </summary>
+        public async Task<bool> RejectSideSwapAsync(int roomId, int userId)
+        {
+            var room = await _db.Rooms.FirstOrDefaultAsync(r => r.Id == roomId);
+
+            if (room == null
+                || room.SideSwapRequestedBy == null
+                || room.SideSwapRequestedBy == userId)
+            {
+                return false;
+            }
+
+            ClearSideSwapRequest(room);
+            await _db.SaveChangesAsync();
+
+            return true;
+        }
+
+        /// <summary>
+        /// Đề nghị đổi bên hết 30 giây thì huỷ. Gọi khi mở phòng hoặc mỗi vòng đồng hồ,
+        /// vì client có thể đóng tab nên không gửi được câu trả lời.
+        /// Trả về true nếu vừa huỷ một đề nghị quá hạn.
+        /// </summary>
+        public async Task<bool> ExpireSideSwapAsync(int roomId)
+        {
+            var room = await _db.Rooms.FirstOrDefaultAsync(r => r.Id == roomId);
+
+            if (room == null || room.SideSwapExpiresAt == null)
+            {
+                return false;
+            }
+
+            if (room.SideSwapExpiresAt.Value > DateTime.UtcNow)
+            {
+                return false;
+            }
+
+            ClearSideSwapRequest(room);
+            await _db.SaveChangesAsync();
+
+            return true;
+        }
+
+        /// <summary>
+        /// Đồng ý đổi bên: hoán đổi ghế của hai đấu thủ rồi XOÁ cờ sẵn sàng của cả hai
+        /// (đặc tả 2.3 - Ready Reset), buộc hai bên xác nhận lại phe cờ trước khi đánh.
+        ///
+        /// Ván đang diễn ra thì không đổi: phe nằm ở Match.RedUserId/BlackUserId của
+        /// realtime, sửa RoomParticipant.Side lúc này sẽ làm lệch với bàn đang chơi.
+        /// </summary>
+        public async Task<(bool ok, string? error)> AcceptSideSwapAsync(int roomId, int userId)
+        {
+            var room = await _db.Rooms.FirstOrDefaultAsync(r => r.Id == roomId);
+
+            if (room == null || room.Status == RoomStatus.Closed)
+            {
+                return (false, "Phòng không còn hoạt động.");
+            }
+
+            if (room.SideSwapRequestedBy == null || room.SideSwapRequestedBy == userId)
+            {
+                return (false, "Không có yêu cầu đổi bên nào đang chờ trả lời.");
+            }
+
+            if (room.Status == RoomStatus.Playing)
+            {
+                return (false, "Ván đang diễn ra, không thể đổi bên lúc này.");
+            }
+
+            var players = await _db.RoomParticipants
+                .Where(p => p.RoomId == roomId && p.Role == ParticipantRole.Player)
+                .ToListAsync();
+
+            if (players.Count != 2)
+            {
+                return (false, "Chỉ đổi bên được khi phòng có đúng hai đấu thủ.");
+            }
+
+            var requester = players.FirstOrDefault(p => p.UserId == room.SideSwapRequestedBy.Value);
+            var other = players.FirstOrDefault(p => p.UserId != room.SideSwapRequestedBy.Value);
+
+            if (requester == null || other == null)
+            {
+                return (false, "Người xin đổi bên không còn trong phòng.");
+            }
+
+            // Hoán đổi qua biến tạm: ghi thẳng sẽ làm mất giá trị ghế của bên kia.
+            (requester.Side, other.Side) = (other.Side, requester.Side);
+
+            // Ready Reset: hai bên phải xác nhận lại sau khi đổi phe.
+            requester.IsReady = false;
+            other.IsReady = false;
+
+            ClearSideSwapRequest(room);
+            room.LastActivityAt = DateTime.UtcNow;
+
+            await _db.SaveChangesAsync();
+
+            return (true, null);
+        }
+
+        private static void ClearSideSwapRequest(Room room)
+        {
+            room.SideSwapRequestedBy = null;
+            room.SideSwapExpiresAt = null;
+        }
+
+        /// <summary>
+        /// Đuổi khán giả: CẢ HAI đấu thủ đều có quyền (đặc tả 4.2 - 8B), không chỉ chủ phòng.
+        /// Người bị đuổi bị ghi vào danh sách chặn nên không vào lại được phòng này.
+        /// Trả về (thành công, thông điệp lỗi).
+        /// </summary>
+        public async Task<(bool ok, string? error)> KickSpectatorAsync(int roomId, int requesterId, int targetUserId)
+        {
+            if (requesterId == targetUserId)
+            {
+                return (false, "Bạn không thể tự đuổi chính mình.");
+            }
+
+            var room = await _db.Rooms.FirstOrDefaultAsync(r => r.Id == roomId);
+
+            if (room == null || room.Status == RoomStatus.Closed)
+            {
+                return (false, "Phòng không còn hoạt động.");
+            }
+
+            // Quyền đuổi thuộc về hai ghế cờ, chủ phòng cũng chỉ được vì đang ngồi ghế.
+            var isSeated = await _db.RoomParticipants.AnyAsync(p =>
+                p.RoomId == roomId
+                && p.UserId == requesterId
+                && p.Role == ParticipantRole.Player);
+
+            if (!isSeated)
+            {
+                return (false, "Chỉ hai đấu thủ mới có quyền đuổi người xem.");
+            }
+
+            var target = await _db.RoomParticipants
+                .FirstOrDefaultAsync(p => p.RoomId == roomId && p.UserId == targetUserId);
+
+            if (target == null)
+            {
+                return (false, "Người đó không ở trong phòng.");
+            }
+
+            if (target.Role != ParticipantRole.Spectator)
+            {
+                return (false, "Chỉ đuổi được khán giả, không đuổi được đấu thủ.");
+            }
+
+            await BlockUserAsync(roomId, targetUserId, requesterId);
+            await RemoveParticipantAsync(roomId, targetUserId);
+
+            return (true, null);
         }
 
         // Không còn SetReadyAsync: cờ IsReady do hub ToggleReady ghi, và ToggleReady

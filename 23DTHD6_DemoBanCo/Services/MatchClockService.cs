@@ -80,9 +80,85 @@ namespace _23DTHD6_DemoBanCo.Services
                     continue;
                 }
 
+                // Ván còn đếm ngược 3-2-1: chưa tính giờ, chưa tính treo ván, và chưa
+                // gửi nước hợp lệ cho ai — nếu không bên đỏ mất 3 giây và luật R17 có
+                // thể bắn ngay khi ván mở.
+                //
+                // Vòng đếm cuối cùng (mốc đã qua) PHẢI phát MatchUpdated: nếu không,
+                // sự kiện MatchStarted duy nhất đã gửi lúc tạo ván vẫn mang
+                // countdownSecondsLeft > 0 và danh sách nước hợp lệ rỗng, nên cả hai
+                // bên sẽ bị khoá bàn vĩnh viễn dù ván đã mở.
+                if (MatchService.IsCountingDown(match))
+                {
+                    await NotifyGroupAsync(match.Id, "MatchTick", new
+                    {
+                        matchId = match.Id,
+                        countingDown = true,
+                        countdownSecondsLeft = (int)Math.Max(
+                            0, (match.CountdownEndsAt!.Value - now).TotalSeconds)
+                    }, stoppingToken);
+
+                    continue;
+                }
+
+                // Chỉ ván vừa kết thúc đếm mới cần phát lại toàn bộ trạng thái; các
+                // vòng sau không phát lại để khỏi dội dữ liệu mỗi giây.
+                if (match.CountdownEndsAt.HasValue
+                    && (now - match.CountdownEndsAt.Value).TotalSeconds < 5)
+                {
+                    await _hubContext.Clients
+                        .Group(ChessHub.GetMatchGroupName(match.Id))
+                        .SendAsync("MatchCountdownOver", new { matchId = match.Id }, stoppingToken);
+                }
+
+                // Đề nghị hoà và đề nghị đi lại đều có hạn 30 giây. Client có thể đóng tab
+                // nên không gửi được câu trả lời; đồng hồ nền là nơi duy nhất dọn được.
+                if (await matchService.ExpireDrawOfferAsync(match.Id))
+                {
+                    await NotifyGroupAsync(match.Id, "DrawOfferResolved", new
+                    {
+                        matchId = match.Id,
+                        accepted = false,
+                        reason = "Hết thời hạn 30 giây, đề nghị hoà đã bị huỷ."
+                    }, stoppingToken);
+
+                    continue;
+                }
+
+                if (await matchService.ExpireUndoRequestAsync(match.Id))
+                {
+                    await NotifyGroupAsync(match.Id, "UndoResolved", new
+                    {
+                        matchId = match.Id,
+                        accepted = false,
+                        expired = true
+                    }, stoppingToken);
+
+                    continue;
+                }
+
                 if (match.TimeLimitSeconds > 0)
                 {
                     await TickClockAsync(db, matchService, match, now, stoppingToken);
+
+                    // Phát đồng hồ mỗi giây để client không phải tự đoán: ván đang trừ
+                    // giờ thì server là nguồn chân lý, client chỉ hiển thị con số nhận về.
+                    // Còn bên mất kết nối thì báo số giây chờ còn lại của đồng hồ ân hạn 60s.
+                    await NotifyGroupAsync(match.Id, "MatchTick", new
+                    {
+                        matchId = match.Id,
+                        redTimeLeft = match.RedTimeLeftSeconds,
+                        blackTimeLeft = match.BlackTimeLeftSeconds,
+                        turnSide = match.TurnSide,
+                        disconnectedUserId = match.DisconnectedUserId,
+                        disconnectSecondsLeft = match.DisconnectedAt == null
+                            ? 0
+                            : (int)Math.Max(
+                                0,
+                                MatchService.DisconnectGraceSeconds
+                                - (now - match.DisconnectedAt.Value).TotalSeconds),
+                        serverTimeUtc = now.ToString("O")
+                    }, stoppingToken);
                 }
                 else
                 {
@@ -90,6 +166,15 @@ namespace _23DTHD6_DemoBanCo.Services
                 }
             }
         }
+
+        /// <summary>
+        /// Phát một sự kiện cho đúng group của ván. Bọc lại vì nhiều chỗ gọi đều cần
+        /// cùng một cách viết tên group, tránh lệch chuỗi "match:{id}".
+        /// </summary>
+        private Task NotifyGroupAsync(int matchId, string eventName, object payload, CancellationToken ct)
+            => _hubContext.Clients
+                .Group(ChessHub.GetMatchGroupName(matchId))
+                .SendAsync(eventName, payload, ct);
 
         /// <summary>
         /// Trừ thời gian của bên đang đi theo số giây đã trôi kể từ mốc thời gian cuối.
